@@ -77,9 +77,6 @@ export default function LoginClient() {
           {loading ? "处理中..." : "登录"}
         </button>
 
-        <button onClick={signUp} disabled={loading} style={{ padding: 10 }}>
-          注册（初始化用）
-        </button>
 
         {!!msg && <div style={{ background: "#fff3cd", padding: 10, borderRadius: 8 }}>{msg}</div>}
 
