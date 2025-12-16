@@ -40,6 +40,21 @@ export default function LoginClient() {
       setLoading(false);
     }
   };
+  
+  const resetPassword = async () => {
+  if (!email) return setMsg("请先输入邮箱");
+  setLoading(true);
+  setMsg("");
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) return setMsg("发送失败：" + error.message);
+    setMsg("✅ 已发送重置密码邮件，请到邮箱打开链接设置新密码。");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div style={{ maxWidth: 420, margin: "60px auto", padding: 16 }}>
@@ -75,6 +90,9 @@ export default function LoginClient() {
 
         <button onClick={signIn} disabled={loading} style={{ padding: 10, fontWeight: 800 }}>
           {loading ? "处理中..." : "登录"}
+        </button>
+        <button onClick={resetPassword} disabled={loading} style={{ padding: 10 }}>
+         忘记密码（发邮件重置）
         </button>
 
 
