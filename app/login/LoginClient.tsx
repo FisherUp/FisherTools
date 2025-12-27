@@ -8,6 +8,7 @@ export default function LoginClient() {
   const router = useRouter();
   const sp = useSearchParams();
   const redirectedFrom = sp.get("redirectedFrom") || "/transactions";
+  const redirectedFromDecoded = decodeURIComponent(redirectedFrom);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,22 +42,24 @@ export default function LoginClient() {
     }
   };
   
- const resetPassword = async () => {
+const resetPassword = async () => {
   const emailTrim = email.trim();
   if (!emailTrim) return setMsg("请先输入邮箱");
 
   setLoading(true);
   setMsg("");
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(emailTrim, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
-    });
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(emailTrim, { redirectTo });
     if (error) return setMsg("发送失败：" + error.message);
+
     setMsg("✅ 已发送重置密码邮件，请到邮箱打开链接设置新密码。");
   } finally {
     setLoading(false);
   }
 };
+
 
   return (
     <div style={{ maxWidth: 420, margin: "60px auto", padding: 16 }}>
@@ -100,7 +103,7 @@ export default function LoginClient() {
 
         {!!msg && <div style={{ background: "#fff3cd", padding: 10, borderRadius: 8 }}>{msg}</div>}
 
-        <div style={{ fontSize: 12, color: "#666" }}>登录后将跳转回：{redirectedFrom}</div>
+        <div style={{ fontSize: 12, color: "#666" }}>登录后将跳转回：{redirectedFromDecoded}</div>
       </div>
     </div>
   );
