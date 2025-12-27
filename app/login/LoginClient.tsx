@@ -49,7 +49,7 @@ const resetPassword = async () => {
   setLoading(true);
   setMsg("");
   try {
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`;
+    const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password`;
 
     const { error } = await supabase.auth.resetPasswordForEmail(emailTrim, { redirectTo });
     if (error) return setMsg("发送失败：" + error.message);
