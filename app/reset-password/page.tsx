@@ -6,35 +6,37 @@ import { supabase } from "../../lib/supabaseClient";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+
+  const [ready, setReady] = useState(false);
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const check = async () => {
       const { data } = await supabase.auth.getSession();
       if (!data.session) {
-        setMsg("当前链接无效或未登录。请通过邀请邮件链接进入，或让管理员重新邀请。");
+        setMsg("当前链接未建立登录态。请从邮件链接进入，或重新发起“忘记密码”。");
         setReady(false);
         return;
       }
       setReady(true);
+      setMsg("");
     };
     check();
   }, []);
 
-  const update = async () => {
+  const onSet = async () => {
     if (!ready) return;
-    if (password.length < 6) return setMsg("密码至少 6 位");
+    if (password.trim().length < 6) return setMsg("密码至少 6 位");
+
     setLoading(true);
     setMsg("");
     try {
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) return setMsg("修改失败：" + error.message);
+      const { error } = await supabase.auth.updateUser({ password: password.trim() });
+      if (error) return setMsg("设置失败：" + error.message);
 
       setMsg("✅ 密码已设置成功，请重新登录。");
-      // 设置完密码后建议退出，让用户走正常登录流程
       await supabase.auth.signOut();
       setTimeout(() => router.replace("/login"), 800);
     } finally {
@@ -56,9 +58,9 @@ export default function ResetPasswordPage() {
       />
 
       <button
-        onClick={update}
-        disabled={loading || !ready}
-        style={{ padding: 10, width: "100%", fontWeight: 800 }}
+        onClick={onSet}
+        disabled={!ready || loading}
+        style={{ width: "100%", padding: 10, fontWeight: 800 }}
       >
         {loading ? "处理中..." : "确认设置密码"}
       </button>
