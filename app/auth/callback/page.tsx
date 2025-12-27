@@ -4,6 +4,31 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
+function safeNextFromUrl(defaultNext = "/reset-password") {
+  try {
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get("next"); // 可能是 "%2Freset-password" 或 "/reset-password"
+    if (!raw) return defaultNext;
+
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      return defaultNext;
+    }
+
+    // 安全：只允许站内路径
+    if (decoded.startsWith("http://") || decoded.startsWith("https://")) return defaultNext;
+
+    // 确保以 / 开头
+    if (!decoded.startsWith("/")) decoded = "/" + decoded;
+
+    return decoded;
+  } catch {
+    return defaultNext;
+  }
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter();
   const [msg, setMsg] = useState("处理中...");
@@ -11,11 +36,11 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const run = async () => {
       try {
-        // Supabase 邀请/重置/魔法链接常见会带 code 或 token
         const url = new URL(window.location.href);
-
-        // ✅ 新版（PKCE）通常是 code=xxxx
         const code = url.searchParams.get("code");
+
+        // ✅ next 可能是 %2Freset-password，我们这里统一解码并兜底
+        const next = safeNextFromUrl("/reset-password");
 
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -23,20 +48,18 @@ export default function AuthCallbackPage() {
             setMsg("登录回调失败：" + error.message);
             return;
           }
-
-          // ✅ 邀请用户通常需要先设置密码
-          router.replace("/reset-password");
+          router.replace(next);
           return;
         }
 
-        // 兼容一些旧链接：如果没有 code，看看是否已有 session
+        // 没有 code：看看是否已有 session（兼容某些链接）
         const { data } = await supabase.auth.getSession();
         if (data.session) {
-          router.replace("/reset-password");
+          router.replace(next);
           return;
         }
 
-        setMsg("回调链接无效或已过期，请让管理员重新邀请。");
+        setMsg("回调链接无效或已过期。请重新发起“忘记密码”或让管理员重新邀请。");
       } catch (e: any) {
         setMsg("回调异常：" + String(e?.message ?? e));
       }
@@ -52,7 +75,7 @@ export default function AuthCallbackPage() {
         {msg}
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-        如果一直停留在此页，说明邀请链接没有成功换取会话（session）。
+        如果一直停留在此页，说明回调链接没有成功换取会话（session）。
       </div>
     </div>
   );
