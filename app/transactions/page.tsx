@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import jsPDF from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
 
 type Row = {
@@ -323,85 +324,152 @@ export default function TransactionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
-async function exportPdf() {
-  if (rows.length === 0) {
+async function fetchAsBase64(url: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`读取字体失败：${res.status} ${res.statusText}`);
+  const buf = await res.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function fmtDateTime(dt: Date) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${hh}:${mm}`;
+}
+
+async function exportPdf({
+  month,
+  rows,
+  userEmail,
+  userRole,
+  orgName,
+}: {
+  month: string;
+  rows: any[];
+  userEmail: string;
+  userRole: string;
+  orgName: string;
+}) {
+  if (!rows || rows.length === 0) {
     alert("本月暂无流水可导出");
     return;
   }
 
-  // 动态 import，避免构建期问题
-  const { jsPDF } = await import("jspdf");
-  const autoTable = (await import("jspdf-autotable")).default;
+  // 1) 读取字体（关键：必须嵌入字体，中文才不乱码）
+  const fontBase64 = await fetchAsBase64("/fonts/NotoSansCJKsc-Regular.ttf");
 
+  // 2) 创建 PDF
   const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+
+  doc.addFileToVFS("NotoSansCJKsc-Regular.ttf", fontBase64);
+  doc.addFont("NotoSansCJKsc-Regular.ttf", "NotoSansCJK", "normal");
+  doc.setFont("NotoSansCJK", "normal");
+
   const now = new Date();
-  const exportTime = now.toLocaleString();
 
-  const exporter = userEmail || "unknown";
-  const role = userRole || "";
-  const org = orgName || orgId || ""; // 你后面会把 orgName 做出来（organizations.name）
+  // 页边距与行高
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 36;
+  const lineH = 18;
 
-  // 标题
+  let y = margin;
+
+  // 3) 标题 + 导出信息
   doc.setFontSize(16);
-  doc.text(`流水导出（${month}）`, 40, 50);
+  doc.text(`流水导出（${month}）`, margin, y);
+  y += lineH;
 
-  // 导出信息
   doc.setFontSize(10);
-  doc.text(`导出人：${exporter}  ${role ? `(${role})` : ""}`, 40, 70);
-  doc.text(`组织：${org}`, 40, 85);
-  doc.text(`导出时间：${exportTime}`, 40, 100);
+  doc.text(`导出人：${userEmail || "-"}`, margin, y);
+  y += lineH;
+  doc.text(`角色：${userRole || "-"}`, margin, y);
+  y += lineH;
+  doc.text(`组织：${orgName || "-"}`, margin, y);
+  y += lineH;
+  doc.text(`导出时间：${fmtDateTime(now)}`, margin, y);
+  y += lineH;
 
-  // 水印提示（防君子）
-  doc.setTextColor(180);
-  doc.setFontSize(48);
-  doc.text("仅供内部使用", 70, 420, { angle: 30 });
-  doc.setTextColor(0);
+  // 画一条分隔线
+  y += 6;
+  doc.line(margin, y, pageW - margin, y);
+  y += lineH;
+
+  // 4) 表头（简单文本表格）
   doc.setFontSize(10);
+  const cols = {
+    date: margin,
+    dir: margin + 90,
+    amt: margin + 150,
+    cat: margin + 240,
+    acc: margin + 360,
+    desc: margin + 470,
+  };
 
-  // 汇总
-  doc.text(
-    `收入合计：${formatYuanFromFen(summary.income)} 元    支出合计：${formatYuanFromFen(summary.expense)} 元    净额：${formatYuanFromFen(summary.net)} 元`,
-    40,
-    130
-  );
+  doc.text("日期", cols.date, y);
+  doc.text("收支", cols.dir, y);
+  doc.text("金额(元)", cols.amt, y);
+  doc.text("类别", cols.cat, y);
+  doc.text("账户", cols.acc, y);
+  doc.text("备注", cols.desc, y);
+  y += 10;
+  doc.line(margin, y, pageW - margin, y);
+  y += lineH;
 
-  // 表格数据
-  const head = [["日期", "收/支", "金额(元)", "类别", "账户", "备注"]];
-  const body = rows.map((r) => [
-    r.date,
-    r.direction === "income" ? "收入" : "支出",
-    formatYuanFromFen(r.amount),
-    r.categories?.name ?? "-",
-    r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-",
-    r.description ?? "",
-  ]);
+  // 5) 行数据
+  const maxDescWidth = pageW - margin - cols.desc;
 
-  autoTable(doc, {
-    head,
-    body,
-    startY: 150,
-    styles: { fontSize: 9, cellPadding: 4 },
-    headStyles: { fillColor: [245, 245, 245], textColor: 20 },
-    columnStyles: {
-      2: { halign: "right" },
-    },
-    didDrawPage: (data) => {
-      // 页脚
-      const pageCount = doc.getNumberOfPages();
-      const pageNumber = doc.getCurrentPageInfo().pageNumber;
-      doc.setFontSize(9);
-      doc.setTextColor(120);
-      doc.text(
-        `第 ${pageNumber} / ${pageCount} 页`,
-        data.settings.margin.left,
-        doc.internal.pageSize.height - 20
-      );
-      doc.setTextColor(0);
-    },
-  });
+  for (const r of rows) {
+    const date = String(r.date ?? "");
+    const direction = r.direction === "income" ? "收入" : "支出";
+    const amountYuan = ((Number(r.amount) || 0) / 100).toFixed(2);
+    const categoryName = r.categories?.name ?? "-";
+    const accountText = r.accounts
+      ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）`
+      : "-";
+    const desc = r.description ?? "";
 
+    // 换页判断
+    if (y > pageH - margin) {
+      doc.addPage();
+      doc.setFont("NotoSansSC", "normal");
+      y = margin;
+    }
+
+    doc.text(date, cols.date, y);
+    doc.text(direction, cols.dir, y);
+    doc.text(amountYuan, cols.amt, y);
+    doc.text(categoryName, cols.cat, y);
+
+    // 账户列可能很长，做裁剪
+    doc.text(doc.splitTextToSize(accountText, cols.desc - cols.acc - 10), cols.acc, y);
+
+    // 备注列做自动换行
+    const descLines = doc.splitTextToSize(desc, maxDescWidth);
+    doc.text(descLines, cols.desc, y);
+
+    // 取最大占用行数
+    const usedLines = Math.max(
+      1,
+      Array.isArray(descLines) ? descLines.length : 1
+    );
+    y += lineH * usedLines;
+  }
+
+  // 6) 保存
   doc.save(`流水_${month}.pdf`);
 }
+
 
   
   // 计算月度合计
@@ -493,9 +561,26 @@ async function exportPdf() {
           <button onClick={exportYearlySummaryCsv} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
             年度汇总CSV
           </button>
-          <button onClick={exportPdf} disabled={loading || rows.length === 0} style={{ padding: "8px 12px", fontWeight: 700 }}>
-            导出PDF
-          </button>
+          <button
+  onClick={async () => {
+    try {
+      await exportPdf({
+        month,
+        rows,
+        userEmail,
+        userRole,
+        orgName: orgId ? orgId : "", // 你后面如果已改成 orgName 就换成 orgName
+      });
+    } catch (e: any) {
+      alert("导出PDF失败：" + String(e?.message ?? e));
+    }
+  }}
+  disabled={loading || rows.length === 0}
+  style={{ padding: "8px 12px", fontWeight: 700 }}
+>
+  PDF导出
+</button>
+
 
           <a href="/transactions/new" style={{ padding: "8px 12px", fontWeight: 700 }}>
             + 新增
