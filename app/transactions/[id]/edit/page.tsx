@@ -5,6 +5,7 @@ import { supabase } from "../../../../lib/supabaseClient";
 
 type Account = { id: string; name: string; type: "cash" | "bank" };
 type Category = { id: string; name: string };
+type Member = { id: string; name: string };
 
 type Tx = {
   id: string;
@@ -14,6 +15,8 @@ type Tx = {
   account_id: string;
   category_id: string;
   description: string | null;
+  handler1_id: string | null;
+  handler2_id: string | null;
 };
 
 type AttachmentRow = {
@@ -21,6 +24,7 @@ type AttachmentRow = {
   transaction_id: string;
   org_id: string;
   storage_path: string;
+  file_url: string;
   created_at: string;
 };
 
@@ -31,10 +35,6 @@ type AttachmentView = AttachmentRow & {
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const BUCKET = "receipts";
 const SIGNED_URL_TTL = 300; // 5分钟
-
-function safeStr(v: any) {
-  return v === null || v === undefined ? "" : String(v);
-}
 
 async function getMyProfile() {
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -51,7 +51,7 @@ async function getMyProfile() {
   if (pErr) throw new Error("读取 profiles 失败：" + pErr.message);
   if (!profile?.org_id) throw new Error("profiles.org_id 为空，请为该用户设置组织。");
 
-  return { userId: user.id, orgId: String(profile.org_id), role: String(profile.role) };
+  return { userId: user.id, orgId: String(profile.org_id), role: String(profile.role ?? "") };
 }
 
 export default function EditTransactionPage({ params }: { params: { id: string } }) {
@@ -59,6 +59,7 @@ export default function EditTransactionPage({ params }: { params: { id: string }
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
 
   const [date, setDate] = useState("");
   const [direction, setDirection] = useState<"expense" | "income">("expense");
@@ -66,6 +67,10 @@ export default function EditTransactionPage({ params }: { params: { id: string }
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [description, setDescription] = useState("");
+
+  // ✅ 经手人1/2
+  const [handler1Id, setHandler1Id] = useState<string>("");
+  const [handler2Id, setHandler2Id] = useState<string>("");
 
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [filesUploading, setFilesUploading] = useState(false);
@@ -80,18 +85,17 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     return Math.round(n * 100);
   }, [amountYuan]);
 
-  // ✅ 读取附件行 + 为每条生成 signed url
   const loadAttachments = async () => {
     setAttMsg("");
 
     try {
-      // 确保登录 + profile OK（也让 RLS 的 current_org_id 生效）
-      await getMyProfile();
+      const { orgId } = await getMyProfile();
 
       const { data, error } = await supabase
         .from("attachments")
-        .select("id, transaction_id, org_id, storage_path, created_at")
+        .select("id, transaction_id, org_id, storage_path, file_url, created_at")
         .eq("transaction_id", id)
+        .eq("org_id", orgId)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -101,30 +105,33 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       }
 
       const rows: AttachmentRow[] = Array.isArray(data)
-        ? data
-            .filter((x: any) => x.storage_path) // 防呆：不显示空路径
-            .map((x: any) => ({
-              id: safeStr(x.id),
-              transaction_id: safeStr(x.transaction_id),
-              org_id: safeStr(x.org_id),
-              storage_path: safeStr(x.storage_path),
-              created_at: safeStr(x.created_at),
-            }))
+        ? data.map((x: any) => ({
+            id: String(x.id),
+            transaction_id: String(x.transaction_id),
+            org_id: String(x.org_id),
+            storage_path: String(x.storage_path ?? ""),
+            file_url: String(x.file_url ?? ""),
+            created_at: String(x.created_at),
+          }))
         : [];
 
-      // 并行生成 signed url（更快）
-      const views: AttachmentView[] = await Promise.all(
-        rows.map(async (r) => {
-          const { data: sData, error: sErr } = await supabase.storage
-            .from(BUCKET)
-            .createSignedUrl(r.storage_path, SIGNED_URL_TTL);
+      const views: AttachmentView[] = [];
+      for (const r of rows) {
+        if (!r.storage_path) {
+          views.push({ ...r, signed_url: "" });
+          continue;
+        }
+        const { data: sData, error: sErr } = await supabase.storage
+          .from(BUCKET)
+          .createSignedUrl(r.storage_path, SIGNED_URL_TTL);
 
-          return {
-            ...r,
-            signed_url: sErr || !sData?.signedUrl ? "" : sData.signedUrl,
-          };
-        })
-      );
+        if (sErr || !sData?.signedUrl) {
+          console.error("createSignedUrl error:", sErr);
+          views.push({ ...r, signed_url: "" });
+        } else {
+          views.push({ ...r, signed_url: sData.signedUrl });
+        }
+      }
 
       setAttachments(views);
     } catch (e: any) {
@@ -133,11 +140,9 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     }
   };
 
-  // ✅ 上传：Storage 上传成功后，必须插入 attachments（否则页面无法显示）
   const uploadReceipts = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
 
-    // 校验大小
     for (const f of Array.from(fileList)) {
       if (f.size > MAX_FILE_SIZE) {
         setAttMsg(`❌ 文件 ${f.name} 超过 20MB（${(f.size / 1024 / 1024).toFixed(1)}MB），请压缩后再上传`);
@@ -149,61 +154,41 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     setAttMsg("");
 
     try {
-      const { orgId, role } = await getMyProfile();
-
-      // 角色提醒（如果你 RLS 只允许 finance/admin 写 attachments）
-      if (!["admin", "finance"].includes(role)) {
-        setAttMsg(`⚠️ 你的角色是 ${role}，按 RLS 可能没有写入附件权限（finance/admin 才能上传）。`);
-      }
-
-      const errors: string[] = [];
+      const { orgId } = await getMyProfile();
 
       for (const file of Array.from(fileList)) {
         const safeName = file.name.replace(/[^\w.\-]+/g, "_");
         const storagePath = `${orgId}/${id}/${Date.now()}_${safeName}`;
 
-        // 1) 上传到 Storage
+        // 1) 上传 Storage
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(storagePath, file, {
           upsert: false,
         });
 
         if (upErr) {
           console.error("UPLOAD ERROR:", upErr);
-          errors.push(`上传失败(${file.name})：${upErr.message}`);
+          setAttMsg("上传失败：" + upErr.message);
           continue;
         }
 
-        // 2) 写入 attachments（关键：用 select().single() 强制返回，确保真的写入）
-        const { data: insData, error: insErr } = await supabase
-          .from("attachments")
-          .insert({
-            org_id: orgId,
-            transaction_id: id,
-            storage_path: storagePath,
-            // file_url：正式版可不写
-          })
-          .select("id, transaction_id, org_id, storage_path, created_at")
-          .single();
+        // 2) 写 attachments（✅ 同时写 file_url 和 storage_path，避免 NOT NULL）
+        const { error: insErr } = await supabase.from("attachments").insert({
+          org_id: orgId,
+          transaction_id: id,
+          storage_path: storagePath,
+          file_url: storagePath, // ✅ 用 storagePath 占位（正式版也够用）
+        });
 
-        if (insErr || !insData?.id) {
-          console.error("INSERT attachments ERROR:", insErr);
-
-          // 回滚刚上传的文件，避免 Storage 里留下“孤儿文件”
+        if (insErr) {
+          // 写入失败就回滚 storage 文件，避免“storage 有文件但表没记录”
+          console.error("INSERT attachment ERROR:", insErr);
           await supabase.storage.from(BUCKET).remove([storagePath]);
-
-          errors.push(`写入附件失败(${file.name})：${insErr?.message || "unknown error"}（已回滚Storage文件）`);
-          continue;
+          setAttMsg(`写入附件失败（${file.name}）：${insErr.message}（已回滚Storage文件）`);
         }
       }
 
-      // 刷新
       await loadAttachments();
-
-      if (errors.length > 0) {
-        setAttMsg("部分失败：\n" + errors.join("\n"));
-      } else {
-        setAttMsg("✅ 上传完成（已写入 attachments，并可显示）");
-      }
+      setAttMsg("✅ 上传完成");
     } catch (e: any) {
       setAttMsg(String(e?.message ?? e));
     } finally {
@@ -211,7 +196,6 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     }
   };
 
-  // ✅ 删除：先删 storage 文件，再删 attachments 行
   const deleteReceipt = async (a: AttachmentView) => {
     const ok = confirm("确定要删除这张票据吗？此操作不可恢复。");
     if (!ok) return;
@@ -224,12 +208,7 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       const { error: stErr } = await supabase.storage.from(BUCKET).remove([a.storage_path]);
       if (stErr) return setAttMsg("删除 Storage 文件失败：" + stErr.message);
 
-      const { error: dbErr } = await supabase
-        .from("attachments")
-        .delete()
-        .eq("id", a.id)
-        .eq("org_id", orgId);
-
+      const { error: dbErr } = await supabase.from("attachments").delete().eq("id", a.id).eq("org_id", orgId);
       if (dbErr) return setAttMsg("删除附件记录失败：" + dbErr.message);
 
       await loadAttachments();
@@ -239,29 +218,44 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     }
   };
 
-  // 初始化加载
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
       setMsg("");
 
       try {
-        await getMyProfile();
+        const { orgId } = await getMyProfile();
 
-        const [{ data: acc, error: accErr }, { data: cat, error: catErr }] = await Promise.all([
+        const [
+          { data: acc, error: accErr },
+          { data: cat, error: catErr },
+          { data: mem, error: memErr },
+        ] = await Promise.all([
           supabase.from("accounts").select("id,name,type").order("created_at", { ascending: true }),
           supabase.from("categories").select("id,name").order("created_at", { ascending: true }),
+          supabase
+            .from("members")
+            .select("id,name")
+            .eq("org_id", orgId)
+            .eq("is_active", true)
+            .order("name", { ascending: true }),
         ]);
 
         if (accErr) setMsg("加载账户失败：" + accErr.message);
         if (catErr) setMsg("加载类别失败：" + catErr.message);
+        if (memErr) setMsg("加载成员失败：" + memErr.message);
 
         setAccounts(acc ?? []);
         setCategories(cat ?? []);
+        setMembers(
+          Array.isArray(mem)
+            ? mem.map((m: any) => ({ id: String(m.id), name: String(m.name) }))
+            : []
+        );
 
         const { data: tx, error: txErr } = await supabase
           .from("transactions")
-          .select("id,date,amount,direction,account_id,category_id,description")
+          .select("id,date,amount,direction,account_id,category_id,description,handler1_id,handler2_id")
           .eq("id", id)
           .single();
 
@@ -277,6 +271,9 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         setAccountId(t.account_id);
         setCategoryId(t.category_id);
         setDescription(t.description ?? "");
+
+        setHandler1Id(t.handler1_id ? String(t.handler1_id) : "");
+        setHandler2Id(t.handler2_id ? String(t.handler2_id) : "");
 
         await loadAttachments();
       } catch (e: any) {
@@ -298,6 +295,10 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     if (!categoryId) return setMsg("请选择类别");
     if (amountFen <= 0) return setMsg("金额必须大于 0");
 
+    if (handler1Id && handler2Id && handler1Id === handler2Id) {
+      return setMsg("经手人1 和 经手人2 不能是同一个人");
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase
@@ -309,6 +310,8 @@ export default function EditTransactionPage({ params }: { params: { id: string }
           account_id: accountId,
           category_id: categoryId,
           description: description.trim() || null,
+          handler1_id: handler1Id || null,
+          handler2_id: handler2Id || null,
         })
         .eq("id", id);
 
@@ -320,7 +323,7 @@ export default function EditTransactionPage({ params }: { params: { id: string }
   };
 
   return (
-    <div style={{ maxWidth: 860, margin: "40px auto", padding: 16 }}>
+    <div style={{ maxWidth: 920, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>编辑流水</h1>
 
@@ -337,27 +340,77 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       {!!msg && <div style={{ background: "#fff3cd", padding: 10, borderRadius: 8 }}>{msg}</div>}
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 12 }}>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        <select value={direction} onChange={(e) => setDirection(e.target.value as any)}>
-          <option value="expense">支出</option>
-          <option value="income">收入</option>
-        </select>
-        <input value={amountYuan} onChange={(e) => setAmountYuan(e.target.value)} placeholder="金额（元）" />
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="备注" />
+        <label>
+          日期：
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+
+        <label>
+          类型：
+          <select value={direction} onChange={(e) => setDirection(e.target.value as any)}>
+            <option value="expense">支出</option>
+            <option value="income">收入</option>
+          </select>
+        </label>
+
+        <label>
+          金额（元）：
+          <input value={amountYuan} onChange={(e) => setAmountYuan(e.target.value)} placeholder="金额（元）" />
+        </label>
+
+        <label>
+          账户：
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}（{a.type === "cash" ? "现金" : "银行卡"}）
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          类别：
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* ✅ 经手人 1/2 */}
+        <label>
+          经手人1：
+          <select value={handler1Id} onChange={(e) => setHandler1Id(e.target.value)}>
+            <option value="">（可选）</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          经手人2：
+          <select value={handler2Id} onChange={(e) => setHandler2Id(e.target.value)}>
+            <option value="">（可选）</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 12, color: "#666" }}>提示：经手人1/2 不能选择同一个人。</div>
+        </label>
+
+        <label>
+          备注：
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="备注" rows={3} />
+        </label>
+
         <button disabled={loading}>{loading ? "保存中..." : "保存"}</button>
       </form>
 
@@ -378,11 +431,7 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         </button>
       </div>
 
-      {!!attMsg && (
-        <pre style={{ marginTop: 8, background: "#f5f5f5", padding: 10, borderRadius: 8, whiteSpace: "pre-wrap" }}>
-          {attMsg}
-        </pre>
-      )}
+      {!!attMsg && <div style={{ marginTop: 8, background: "#f5f5f5", padding: 10, borderRadius: 8 }}>{attMsg}</div>}
 
       <div
         style={{
@@ -399,7 +448,7 @@ export default function EditTransactionPage({ params }: { params: { id: string }
           >
             {a.signed_url ? (
               <a href={a.signed_url} target="_blank" rel="noreferrer">
-                <img src={a.signed_url} style={{ width: "100%", height: 160, objectFit: "cover" }} alt="receipt" />
+                <img src={a.signed_url} style={{ width: "100%", height: 160, objectFit: "cover" }} />
               </a>
             ) : (
               <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>
