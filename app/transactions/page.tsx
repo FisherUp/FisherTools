@@ -52,7 +52,7 @@ async function fetchAsBase64Stable(url: string): Promise<string> {
     reader.onerror = () => reject(new Error("FileReader 读取字体失败"));
     reader.onload = () => {
       const result = String(reader.result || "");
-      // data:font/ttf;base64,XXXX
+      // data:font/otf;base64,XXXX
       const idx = result.indexOf("base64,");
       if (idx < 0) reject(new Error("字体 DataURL 格式异常"));
       else resolve(result.slice(idx + "base64,".length));
@@ -354,12 +354,12 @@ export default function TransactionsPage() {
     }
 
     // ⚠️ 这里的路径/文件名必须与你 public 目录一致
-    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.ttf");
+    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.otf");
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    doc.addFileToVFS("NotoSansCJKsc-Regular.ttf", fontBase64);
-    doc.addFont("NotoSansCJKsc-Regular.ttf", "NotoSansCJK", "normal");
+    doc.addFileToVFS("NotoSansCJKsc-Regular.otf", fontBase64);
+    doc.addFont("NotoSansCJKsc-Regular.otf", "NotoSansCJK", "normal");
     doc.setFont("NotoSansCJK", "normal");
 
     const now = new Date();
