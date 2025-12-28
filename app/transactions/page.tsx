@@ -12,12 +12,9 @@ type Row = {
   description: string | null;
   accounts: { name: string; type: "cash" | "bank" } | null;
   categories: { name: string } | null;
-
   handler1_id: string | null;
   handler2_id: string | null;
 };
-
-type Member = { id: string; name: string };
 
 function formatYuanFromFen(fen: number) {
   return (fen / 100).toFixed(2);
@@ -42,6 +39,37 @@ function downloadTextFile(filename: string, content: string) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** ✅ 关键：稳定读取大字体（Noto CJK 很大），不要用 btoa(binary) 那套 */
+async function fetchAsBase64Stable(url: string): Promise<string> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`读取字体失败：${res.status} ${res.statusText}（${url}）`);
+  const blob = await res.blob();
+
+  const base64: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("FileReader 读取字体失败"));
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      // data:font/ttf;base64,XXXX
+      const idx = result.indexOf("base64,");
+      if (idx < 0) reject(new Error("字体 DataURL 格式异常"));
+      else resolve(result.slice(idx + "base64,".length));
+    };
+    reader.readAsDataURL(blob);
+  });
+
+  return base64;
+}
+
+function fmtDateTime(dt: Date) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${hh}:${mm}`;
 }
 
 export default function TransactionsPage() {
@@ -85,7 +113,6 @@ export default function TransactionsPage() {
 
     setUserEmail(userRes.user.email ?? "");
 
-    // 尝试 join organizations(name)
     const { data: profile, error: pErr } = await supabase
       .from("profiles")
       .select("role, org_id, organizations(name)")
@@ -98,9 +125,12 @@ export default function TransactionsPage() {
       setOrgId(oid);
 
       let oname = String((profile as any).organizations?.name ?? "");
-      // 如果 join 拿不到，就 fallback 再查 organizations
       if (!oname && oid) {
-        const { data: org, error: oErr } = await supabase.from("organizations").select("name").eq("id", oid).single();
+        const { data: org, error: oErr } = await supabase
+          .from("organizations")
+          .select("name")
+          .eq("id", oid)
+          .single();
         if (!oErr && org?.name) oname = String(org.name);
       }
       setOrgName(oname);
@@ -215,7 +245,6 @@ export default function TransactionsPage() {
       const direction = r.direction === "income" ? "收入" : "支出";
       const amountYuan = formatYuanFromFen(r.amount);
       const desc = r.description ?? "";
-
       const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "" : "";
       const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "" : "";
 
@@ -230,7 +259,7 @@ export default function TransactionsPage() {
     downloadTextFile(filename, csvContent);
   };
 
-  // ✅ 月度汇总（按类别）CSV（保持你原逻辑）
+  // ✅ 月度汇总（按类别）CSV
   const exportMonthlySummaryCsv = () => {
     if (rows.length === 0) {
       alert("本月暂无数据");
@@ -263,7 +292,7 @@ export default function TransactionsPage() {
     downloadTextFile(`月度汇总_${month}.csv`, csv);
   };
 
-  // ✅ 年度汇总（12 个月）CSV：从数据库拉该年所有流水后按月聚合（保持你原逻辑）
+  // ✅ 年度汇总（12 个月）CSV
   const exportYearlySummaryCsv = async () => {
     const year = month.slice(0, 4);
     setLoading(true);
@@ -284,7 +313,7 @@ export default function TransactionsPage() {
       const monthMap = new Map<string, { income: number; expense: number }>();
 
       for (const r of data ?? []) {
-        const m = String((r as any).date).slice(0, 7); // YYYY-MM
+        const m = String((r as any).date).slice(0, 7);
         if (!monthMap.has(m)) monthMap.set(m, { income: 0, expense: 0 });
         const item = monthMap.get(m)!;
         const dir = (r as any).direction as "income" | "expense";
@@ -293,7 +322,6 @@ export default function TransactionsPage() {
         else item.expense += amt;
       }
 
-      // 补齐 12 个月
       for (let mm = 1; mm <= 12; mm++) {
         const key = `${year}-${String(mm).padStart(2, "0")}`;
         if (!monthMap.has(key)) monthMap.set(key, { income: 0, expense: 0 });
@@ -318,160 +346,146 @@ export default function TransactionsPage() {
     }
   };
 
+  /** ✅ PDF导出：中文不乱码 + 不可编辑(至少不可轻易编辑) + 包含导出信息 */
+  const exportPdf = async () => {
+    if (!rows || rows.length === 0) {
+      alert("本月暂无流水可导出");
+      return;
+    }
+
+    // ⚠️ 这里的路径/文件名必须与你 public 目录一致
+    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.ttf");
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+    doc.addFileToVFS("NotoSansCJKsc-Regular.ttf", fontBase64);
+    doc.addFont("NotoSansCJKsc-Regular.ttf", "NotoSansCJK", "normal");
+    doc.setFont("NotoSansCJK", "normal");
+
+    const now = new Date();
+
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 36;
+    const lineH = 18;
+
+    let y = margin;
+
+    // 标题区
+    doc.setFontSize(16);
+    doc.text(`流水导出（${month}）`, margin, y);
+    y += lineH;
+
+    doc.setFontSize(10);
+    doc.text(`导出人：${userEmail || "-"}`, margin, y);
+    y += lineH;
+    doc.text(`角色：${userRole || "-"}`, margin, y);
+    y += lineH;
+    doc.text(`组织：${orgName || (orgId ? orgId.slice(0, 8) + "…" : "-")}`, margin, y);
+    y += lineH;
+    doc.text(`导出时间：${fmtDateTime(now)}`, margin, y);
+    y += lineH;
+
+    y += 6;
+    doc.line(margin, y, pageW - margin, y);
+    y += lineH;
+
+    // 列布局（A4 宽度有限，尽量紧凑）
+    doc.setFontSize(9);
+
+    const cols = {
+      date: margin,
+      dir: margin + 70,
+      amt: margin + 120,
+      cat: margin + 190,
+      acc: margin + 265,
+      h1: margin + 355,
+      h2: margin + 425,
+      desc: margin + 495,
+    };
+
+    const maxDescWidth = pageW - margin - cols.desc;
+
+    // 表头
+    doc.text("日期", cols.date, y);
+    doc.text("收支", cols.dir, y);
+    doc.text("金额", cols.amt, y);
+    doc.text("类别", cols.cat, y);
+    doc.text("账户", cols.acc, y);
+    doc.text("经手1", cols.h1, y);
+    doc.text("经手2", cols.h2, y);
+    doc.text("备注", cols.desc, y);
+    y += 10;
+    doc.line(margin, y, pageW - margin, y);
+    y += lineH;
+
+    const safeText = (s: any) => String(s ?? "");
+
+    for (const r of rows) {
+      const date = safeText(r.date);
+      const direction = r.direction === "income" ? "收入" : "支出";
+      const amountYuan = ((Number(r.amount) || 0) / 100).toFixed(2);
+      const categoryName = safeText(r.categories?.name ?? "-");
+      const accountText = r.accounts
+        ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）`
+        : "-";
+
+      const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "-" : "-";
+      const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "-" : "-";
+      const desc = safeText(r.description ?? "");
+
+      // 换页
+      if (y > pageH - margin) {
+        doc.addPage();
+        doc.setFont("NotoSansCJK", "normal"); // ✅ 修正：不要写错字体名
+        doc.setFontSize(9);
+        y = margin;
+
+        // 新页重画表头
+        doc.text("日期", cols.date, y);
+        doc.text("收支", cols.dir, y);
+        doc.text("金额", cols.amt, y);
+        doc.text("类别", cols.cat, y);
+        doc.text("账户", cols.acc, y);
+        doc.text("经手1", cols.h1, y);
+        doc.text("经手2", cols.h2, y);
+        doc.text("备注", cols.desc, y);
+        y += 10;
+        doc.line(margin, y, pageW - margin, y);
+        y += lineH;
+      }
+
+      // 账户列 & 备注列可能换行
+      const accLines = doc.splitTextToSize(safeText(accountText), cols.h1 - cols.acc - 6);
+      const descLines = doc.splitTextToSize(desc, maxDescWidth);
+
+      const usedLines = Math.max(
+        1,
+        Array.isArray(accLines) ? accLines.length : 1,
+        Array.isArray(descLines) ? descLines.length : 1
+      );
+
+      doc.text(date, cols.date, y);
+      doc.text(direction, cols.dir, y);
+      doc.text(amountYuan, cols.amt, y);
+      doc.text(categoryName, cols.cat, y);
+      doc.text(accLines, cols.acc, y);
+      doc.text(String(h1), cols.h1, y);
+      doc.text(String(h2), cols.h2, y);
+      doc.text(descLines, cols.desc, y);
+
+      y += lineH * usedLines;
+    }
+
+    doc.save(`流水_${month}.pdf`);
+  };
+
   useEffect(() => {
     loadCurrentUser();
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
-async function fetchAsBase64(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`读取字体失败：${res.status} ${res.statusText}`);
-  const buf = await res.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-function fmtDateTime(dt: Date) {
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  const hh = String(dt.getHours()).padStart(2, "0");
-  const mm = String(dt.getMinutes()).padStart(2, "0");
-  return `${y}-${m}-${d} ${hh}:${mm}`;
-}
-
-async function exportPdf({
-  month,
-  rows,
-  userEmail,
-  userRole,
-  orgName,
-}: {
-  month: string;
-  rows: any[];
-  userEmail: string;
-  userRole: string;
-  orgName: string;
-}) {
-  if (!rows || rows.length === 0) {
-    alert("本月暂无流水可导出");
-    return;
-  }
-
-  // 1) 读取字体（关键：必须嵌入字体，中文才不乱码）
-  const fontBase64 = await fetchAsBase64("/fonts/NotoSansCJKsc-Regular.ttf");
-
-  // 2) 创建 PDF
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-
-  doc.addFileToVFS("NotoSansCJKsc-Regular.ttf", fontBase64);
-  doc.addFont("NotoSansCJKsc-Regular.ttf", "NotoSansCJK", "normal");
-  doc.setFont("NotoSansCJK", "normal");
-
-  const now = new Date();
-
-  // 页边距与行高
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 36;
-  const lineH = 18;
-
-  let y = margin;
-
-  // 3) 标题 + 导出信息
-  doc.setFontSize(16);
-  doc.text(`流水导出（${month}）`, margin, y);
-  y += lineH;
-
-  doc.setFontSize(10);
-  doc.text(`导出人：${userEmail || "-"}`, margin, y);
-  y += lineH;
-  doc.text(`角色：${userRole || "-"}`, margin, y);
-  y += lineH;
-  doc.text(`组织：${orgName || "-"}`, margin, y);
-  y += lineH;
-  doc.text(`导出时间：${fmtDateTime(now)}`, margin, y);
-  y += lineH;
-
-  // 画一条分隔线
-  y += 6;
-  doc.line(margin, y, pageW - margin, y);
-  y += lineH;
-
-  // 4) 表头（简单文本表格）
-  doc.setFontSize(10);
-  const cols = {
-    date: margin,
-    dir: margin + 90,
-    amt: margin + 150,
-    cat: margin + 240,
-    acc: margin + 360,
-    desc: margin + 470,
-  };
-
-  doc.text("日期", cols.date, y);
-  doc.text("收支", cols.dir, y);
-  doc.text("金额(元)", cols.amt, y);
-  doc.text("类别", cols.cat, y);
-  doc.text("账户", cols.acc, y);
-  doc.text("备注", cols.desc, y);
-  y += 10;
-  doc.line(margin, y, pageW - margin, y);
-  y += lineH;
-
-  // 5) 行数据
-  const maxDescWidth = pageW - margin - cols.desc;
-
-  for (const r of rows) {
-    const date = String(r.date ?? "");
-    const direction = r.direction === "income" ? "收入" : "支出";
-    const amountYuan = ((Number(r.amount) || 0) / 100).toFixed(2);
-    const categoryName = r.categories?.name ?? "-";
-    const accountText = r.accounts
-      ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）`
-      : "-";
-    const desc = r.description ?? "";
-
-    // 换页判断
-    if (y > pageH - margin) {
-      doc.addPage();
-      doc.setFont("NotoSansSC", "normal");
-      y = margin;
-    }
-
-    doc.text(date, cols.date, y);
-    doc.text(direction, cols.dir, y);
-    doc.text(amountYuan, cols.amt, y);
-    doc.text(categoryName, cols.cat, y);
-
-    // 账户列可能很长，做裁剪
-    doc.text(doc.splitTextToSize(accountText, cols.desc - cols.acc - 10), cols.acc, y);
-
-    // 备注列做自动换行
-    const descLines = doc.splitTextToSize(desc, maxDescWidth);
-    doc.text(descLines, cols.desc, y);
-
-    // 取最大占用行数
-    const usedLines = Math.max(
-      1,
-      Array.isArray(descLines) ? descLines.length : 1
-    );
-    y += lineH * usedLines;
-  }
-
-  // 6) 保存
-  doc.save(`流水_${month}.pdf`);
-}
-
-
-  
   // 计算月度合计
   const summary = useMemo(() => {
     let income = 0;
@@ -488,7 +502,6 @@ async function exportPdf({
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>流水列表</h1>
 
-        {/* ✅ 当前用户信息（保留你原来的徽章样式 + org显示name） */}
         {userEmail && (
           <div
             style={{
@@ -561,26 +574,20 @@ async function exportPdf({
           <button onClick={exportYearlySummaryCsv} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
             年度汇总CSV
           </button>
-          <button
-  onClick={async () => {
-    try {
-      await exportPdf({
-        month,
-        rows,
-        userEmail,
-        userRole,
-        orgName: orgId ? orgId : "", // 你后面如果已改成 orgName 就换成 orgName
-      });
-    } catch (e: any) {
-      alert("导出PDF失败：" + String(e?.message ?? e));
-    }
-  }}
-  disabled={loading || rows.length === 0}
-  style={{ padding: "8px 12px", fontWeight: 700 }}
->
-  PDF导出
-</button>
 
+          <button
+            onClick={async () => {
+              try {
+                await exportPdf();
+              } catch (e: any) {
+                alert("导出PDF失败：" + String(e?.message ?? e));
+              }
+            }}
+            disabled={loading || rows.length === 0}
+            style={{ padding: "8px 12px", fontWeight: 700 }}
+          >
+            PDF导出
+          </button>
 
           <a href="/transactions/new" style={{ padding: "8px 12px", fontWeight: 700 }}>
             + 新增
@@ -668,10 +675,8 @@ async function exportPdf({
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                       {r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-"}
                     </td>
-
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h1}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h2}</td>
-
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.description ?? ""}</td>
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
