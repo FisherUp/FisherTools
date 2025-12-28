@@ -323,6 +323,87 @@ export default function TransactionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
+async function exportPdf() {
+  if (rows.length === 0) {
+    alert("本月暂无流水可导出");
+    return;
+  }
+
+  // 动态 import，避免构建期问题
+  const { jsPDF } = await import("jspdf");
+  const autoTable = (await import("jspdf-autotable")).default;
+
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const now = new Date();
+  const exportTime = now.toLocaleString();
+
+  const exporter = userEmail || "unknown";
+  const role = userRole || "";
+  const org = orgName || orgId || ""; // 你后面会把 orgName 做出来（organizations.name）
+
+  // 标题
+  doc.setFontSize(16);
+  doc.text(`流水导出（${month}）`, 40, 50);
+
+  // 导出信息
+  doc.setFontSize(10);
+  doc.text(`导出人：${exporter}  ${role ? `(${role})` : ""}`, 40, 70);
+  doc.text(`组织：${org}`, 40, 85);
+  doc.text(`导出时间：${exportTime}`, 40, 100);
+
+  // 水印提示（防君子）
+  doc.setTextColor(180);
+  doc.setFontSize(48);
+  doc.text("仅供内部使用", 70, 420, { angle: 30 });
+  doc.setTextColor(0);
+  doc.setFontSize(10);
+
+  // 汇总
+  doc.text(
+    `收入合计：${formatYuanFromFen(summary.income)} 元    支出合计：${formatYuanFromFen(summary.expense)} 元    净额：${formatYuanFromFen(summary.net)} 元`,
+    40,
+    130
+  );
+
+  // 表格数据
+  const head = [["日期", "收/支", "金额(元)", "类别", "账户", "备注"]];
+  const body = rows.map((r) => [
+    r.date,
+    r.direction === "income" ? "收入" : "支出",
+    formatYuanFromFen(r.amount),
+    r.categories?.name ?? "-",
+    r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-",
+    r.description ?? "",
+  ]);
+
+  autoTable(doc, {
+    head,
+    body,
+    startY: 150,
+    styles: { fontSize: 9, cellPadding: 4 },
+    headStyles: { fillColor: [245, 245, 245], textColor: 20 },
+    columnStyles: {
+      2: { halign: "right" },
+    },
+    didDrawPage: (data) => {
+      // 页脚
+      const pageCount = doc.getNumberOfPages();
+      const pageNumber = doc.getCurrentPageInfo().pageNumber;
+      doc.setFontSize(9);
+      doc.setTextColor(120);
+      doc.text(
+        `第 ${pageNumber} / ${pageCount} 页`,
+        data.settings.margin.left,
+        doc.internal.pageSize.height - 20
+      );
+      doc.setTextColor(0);
+    },
+  });
+
+  doc.save(`流水_${month}.pdf`);
+}
+
+  
   // 计算月度合计
   const summary = useMemo(() => {
     let income = 0;
@@ -411,6 +492,9 @@ export default function TransactionsPage() {
 
           <button onClick={exportYearlySummaryCsv} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
             年度汇总CSV
+          </button>
+          <button onClick={exportPdf} disabled={loading || rows.length === 0} style={{ padding: "8px 12px", fontWeight: 700 }}>
+            导出PDF
           </button>
 
           <a href="/transactions/new" style={{ padding: "8px 12px", fontWeight: 700 }}>
