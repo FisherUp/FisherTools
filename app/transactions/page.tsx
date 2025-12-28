@@ -11,12 +11,16 @@ type Row = {
   description: string | null;
   accounts: { name: string; type: "cash" | "bank" } | null;
   categories: { name: string } | null;
+
+  handler1_id: string | null;
+  handler2_id: string | null;
 };
+
+type Member = { id: string; name: string };
 
 function formatYuanFromFen(fen: number) {
   return (fen / 100).toFixed(2);
 }
-
 function fenToYuan(fen: number) {
   return (fen / 100).toFixed(2);
 }
@@ -50,6 +54,10 @@ export default function TransactionsPage() {
   const [userEmail, setUserEmail] = useState<string>("");
   const [userRole, setUserRole] = useState<string>("");
   const [orgId, setOrgId] = useState<string>("");
+  const [orgName, setOrgName] = useState<string>("");
+
+  // ✅ members 映射：id -> name（用于显示经手人）
+  const [memberMap, setMemberMap] = useState<Map<string, string>>(new Map());
 
   // 计算当月起止日期：例如 2025-12 -> [2025-12-01, 2026-01-01)
   const { fromDate, toDate } = useMemo(() => {
@@ -63,27 +71,38 @@ export default function TransactionsPage() {
     return { fromDate: from, toDate: to };
   }, [month]);
 
-  // ✅ 读取当前用户邮箱 + role + org_id
+  // ✅ 读取当前用户邮箱 + role + org_id + org_name
   const loadCurrentUser = async () => {
     const { data: userRes, error: userErr } = await supabase.auth.getUser();
     if (userErr || !userRes.user) {
       setUserEmail("");
       setUserRole("");
       setOrgId("");
+      setOrgName("");
       return;
     }
 
     setUserEmail(userRes.user.email ?? "");
 
+    // 尝试 join organizations(name)
     const { data: profile, error: pErr } = await supabase
       .from("profiles")
-      .select("role, org_id")
+      .select("role, org_id, organizations(name)")
       .eq("id", userRes.user.id)
       .single();
 
     if (!pErr && profile) {
-      setUserRole(profile.role ?? "");
-      setOrgId(profile.org_id ? String(profile.org_id) : "");
+      setUserRole((profile as any).role ?? "");
+      const oid = (profile as any).org_id ? String((profile as any).org_id) : "";
+      setOrgId(oid);
+
+      let oname = String((profile as any).organizations?.name ?? "");
+      // 如果 join 拿不到，就 fallback 再查 organizations
+      if (!oname && oid) {
+        const { data: org, error: oErr } = await supabase.from("organizations").select("name").eq("id", oid).single();
+        if (!oErr && org?.name) oname = String(org.name);
+      }
+      setOrgName(oname);
     }
   };
 
@@ -93,7 +112,6 @@ export default function TransactionsPage() {
     try {
       const { data, error } = await supabase
         .from("transactions")
-        // 依赖外键 references accounts(id), categories(id)
         .select(
           `
           id,
@@ -101,6 +119,8 @@ export default function TransactionsPage() {
           amount,
           direction,
           description,
+          handler1_id,
+          handler2_id,
           accounts ( name, type ),
           categories ( name )
         `
@@ -113,6 +133,7 @@ export default function TransactionsPage() {
       if (error) {
         setMsg("加载流水失败：" + error.message);
         setRows([]);
+        setMemberMap(new Map());
         return;
       }
 
@@ -125,10 +146,33 @@ export default function TransactionsPage() {
             description: x.description ?? null,
             accounts: x.accounts ?? null,
             categories: x.categories ?? null,
+            handler1_id: x.handler1_id ? String(x.handler1_id) : null,
+            handler2_id: x.handler2_id ? String(x.handler2_id) : null,
           }))
         : [];
 
       setRows(list);
+
+      // ✅ 拉取经手人名字（批量）
+      const ids = Array.from(
+        new Set(list.flatMap((r) => [r.handler1_id, r.handler2_id]).filter(Boolean) as string[])
+      );
+
+      if (ids.length === 0) {
+        setMemberMap(new Map());
+        return;
+      }
+
+      const { data: memData, error: memErr } = await supabase.from("members").select("id,name").in("id", ids);
+      if (memErr) {
+        console.warn("加载 members 失败：", memErr.message);
+        setMemberMap(new Map());
+        return;
+      }
+
+      const map = new Map<string, string>();
+      (memData ?? []).forEach((m: any) => map.set(String(m.id), String(m.name)));
+      setMemberMap(map);
     } finally {
       setLoading(false);
     }
@@ -153,14 +197,14 @@ export default function TransactionsPage() {
     }
   };
 
-  // 导出当月明细 CSV（Excel 友好：加 BOM）
+  // ✅ 明细 CSV（包含经手人1/2）
   const exportCsv = () => {
     if (rows.length === 0) {
       alert("本月暂无流水可导出");
       return;
     }
 
-    const header = ["日期", "收支", "金额（元）", "类别", "账户", "账户类型", "备注"];
+    const header = ["日期", "收支", "金额（元）", "类别", "账户", "账户类型", "经手人1", "经手人2", "备注"];
 
     const lines = rows.map((r) => {
       const accountName = r.accounts?.name ?? "";
@@ -171,7 +215,10 @@ export default function TransactionsPage() {
       const amountYuan = formatYuanFromFen(r.amount);
       const desc = r.description ?? "";
 
-      return [r.date, direction, amountYuan, categoryName, accountName, accountType, desc]
+      const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "" : "";
+      const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "" : "";
+
+      return [r.date, direction, amountYuan, categoryName, accountName, accountType, h1, h2, desc]
         .map((v) => csvEscape(String(v)))
         .join(",");
     });
@@ -182,7 +229,7 @@ export default function TransactionsPage() {
     downloadTextFile(filename, csvContent);
   };
 
-  // ✅ 月度汇总（按类别）CSV
+  // ✅ 月度汇总（按类别）CSV（保持你原逻辑）
   const exportMonthlySummaryCsv = () => {
     if (rows.length === 0) {
       alert("本月暂无数据");
@@ -215,7 +262,7 @@ export default function TransactionsPage() {
     downloadTextFile(`月度汇总_${month}.csv`, csv);
   };
 
-  // ✅ 年度汇总（12 个月）CSV：从数据库拉该年所有流水后按月聚合
+  // ✅ 年度汇总（12 个月）CSV：从数据库拉该年所有流水后按月聚合（保持你原逻辑）
   const exportYearlySummaryCsv = async () => {
     const year = month.slice(0, 4);
     setLoading(true);
@@ -288,11 +335,11 @@ export default function TransactionsPage() {
   }, [rows]);
 
   return (
-    <div style={{ maxWidth: 980, margin: "40px auto", padding: 16 }}>
+    <div style={{ maxWidth: 1150, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>流水列表</h1>
 
-        {/* ✅ 当前用户信息 */}
+        {/* ✅ 当前用户信息（保留你原来的徽章样式 + org显示name） */}
         {userEmail && (
           <div
             style={{
@@ -304,6 +351,7 @@ export default function TransactionsPage() {
               display: "flex",
               alignItems: "center",
               gap: 10,
+              flexWrap: "wrap",
             }}
           >
             <span>👤 {userEmail}</span>
@@ -322,9 +370,9 @@ export default function TransactionsPage() {
               </span>
             )}
 
-            {!!orgId && (
+            {!!(orgName || orgId) && (
               <span style={{ color: "#666", fontSize: 12 }}>
-                org: {orgId.slice(0, 8)}…
+                org: <b style={{ color: "#333" }}>{orgName || orgId.slice(0, 8) + "…"}</b>
               </span>
             )}
           </div>
@@ -345,7 +393,11 @@ export default function TransactionsPage() {
             {loading ? "刷新中..." : "刷新"}
           </button>
 
-          <button onClick={exportCsv} disabled={loading || rows.length === 0} style={{ padding: "8px 12px", fontWeight: 700 }}>
+          <button
+            onClick={exportCsv}
+            disabled={loading || rows.length === 0}
+            style={{ padding: "8px 12px", fontWeight: 700 }}
+          >
             明细CSV
           </button>
 
@@ -400,7 +452,7 @@ export default function TransactionsPage() {
       )}
 
       <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>日期</th>
@@ -408,6 +460,8 @@ export default function TransactionsPage() {
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>金额（元）</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>账户</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人1</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人2</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>备注</th>
               <th style={{ padding: 10, borderBottom: "1px solid #eee" }}>操作</th>
             </tr>
@@ -416,66 +470,75 @@ export default function TransactionsPage() {
           <tbody>
             {rows.length === 0 && !loading ? (
               <tr>
-                <td colSpan={7} style={{ padding: 14, color: "#666" }}>
+                <td colSpan={9} style={{ padding: 14, color: "#666" }}>
                   本月暂无流水
                 </td>
               </tr>
             ) : (
-              rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.date}</td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                    {r.direction === "income" ? "收入" : "支出"}
-                  </td>
-                  <td
-                    style={{
-                      padding: 10,
-                      borderBottom: "1px solid #f0f0f0",
-                      textAlign: "right",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {formatYuanFromFen(r.amount)}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.categories?.name ?? "-"}</td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                    {r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-"}
-                  </td>
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.description ?? ""}</td>
+              rows.map((r) => {
+                const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "-" : "-";
+                const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "-" : "-";
 
-                  <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                    <a
-                      href={`/transactions/${r.id}/edit`}
+                return (
+                  <tr key={r.id}>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.date}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                      {r.direction === "income" ? "收入" : "支出"}
+                    </td>
+                    <td
                       style={{
-                        marginRight: 10,
-                        color: "#0366d6",
-                        textDecoration: "none",
-                        border: "1px solid #0366d6",
-                        padding: "4px 8px",
-                        borderRadius: 4,
-                        display: "inline-block",
+                        padding: 10,
+                        borderBottom: "1px solid #f0f0f0",
+                        textAlign: "right",
+                        fontWeight: 700,
                       }}
                     >
-                      编辑
-                    </a>
+                      {formatYuanFromFen(r.amount)}
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.categories?.name ?? "-"}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                      {r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-"}
+                    </td>
 
-                    <button
-                      onClick={() => deleteRow(r.id)}
-                      disabled={loading}
-                      style={{
-                        color: "#c00",
-                        border: "1px solid #c00",
-                        background: "transparent",
-                        padding: "4px 8px",
-                        borderRadius: 4,
-                        cursor: "pointer",
-                      }}
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h1}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h2}</td>
+
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.description ?? ""}</td>
+
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
+                      <a
+                        href={`/transactions/${r.id}/edit`}
+                        style={{
+                          marginRight: 10,
+                          color: "#0366d6",
+                          textDecoration: "none",
+                          border: "1px solid #0366d6",
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          display: "inline-block",
+                        }}
+                      >
+                        编辑
+                      </a>
+
+                      <button
+                        onClick={() => deleteRow(r.id)}
+                        disabled={loading}
+                        style={{
+                          color: "#c00",
+                          border: "1px solid #c00",
+                          background: "transparent",
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                        }}
+                      >
+                        删除
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
