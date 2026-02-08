@@ -10,6 +10,10 @@ type Row = {
   amount: number; // 分
   direction: "income" | "expense";
   description: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
   accounts: { name: string; type: "cash" | "bank" } | null;
   categories: { name: string } | null;
   handler1_id: string | null;
@@ -70,6 +74,18 @@ function fmtDateTime(dt: Date) {
   const hh = String(dt.getHours()).padStart(2, "0");
   const mm = String(dt.getMinutes()).padStart(2, "0");
   return `${y}-${m}-${d} ${hh}:${mm}`;
+}
+
+function fmtDateTimeMaybe(v: string | null) {
+  if (!v) return "-";
+  const dt = new Date(v);
+  if (Number.isNaN(dt.getTime())) return "-";
+  return fmtDateTime(dt);
+}
+
+function shortId(v: string | null) {
+  if (!v) return "-";
+  return v.length > 8 ? `${v.slice(0, 8)}…` : v;
 }
 
 export default function TransactionsPage() {
@@ -150,6 +166,10 @@ export default function TransactionsPage() {
           amount,
           direction,
           description,
+          created_by,
+          updated_by,
+          created_at,
+          updated_at,
           handler1_id,
           handler2_id,
           accounts ( name, type ),
@@ -175,6 +195,10 @@ export default function TransactionsPage() {
             amount: Number(x.amount),
             direction: x.direction,
             description: x.description ?? null,
+            created_by: x.created_by ? String(x.created_by) : null,
+            updated_by: x.updated_by ? String(x.updated_by) : null,
+            created_at: x.created_at ? String(x.created_at) : null,
+            updated_at: x.updated_at ? String(x.updated_at) : null,
             accounts: x.accounts ?? null,
             categories: x.categories ?? null,
             handler1_id: x.handler1_id ? String(x.handler1_id) : null,
@@ -634,7 +658,7 @@ export default function TransactionsPage() {
       )}
 
       <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>日期</th>
@@ -645,6 +669,10 @@ export default function TransactionsPage() {
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人1</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人2</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>备注</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建人</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建时间</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>最后修改人</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>最后修改时间</th>
               <th style={{ padding: 10, borderBottom: "1px solid #eee" }}>操作</th>
             </tr>
           </thead>
@@ -652,7 +680,7 @@ export default function TransactionsPage() {
           <tbody>
             {rows.length === 0 && !loading ? (
               <tr>
-                <td colSpan={9} style={{ padding: 14, color: "#666" }}>
+                <td colSpan={13} style={{ padding: 14, color: "#666" }}>
                   本月暂无流水
                 </td>
               </tr>
@@ -684,6 +712,10 @@ export default function TransactionsPage() {
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h1}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h2}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.description ?? ""}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{shortId(r.created_by)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.created_at)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{shortId(r.updated_by)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.updated_at)}</td>
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
                       <a

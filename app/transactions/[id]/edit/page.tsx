@@ -17,6 +17,10 @@ type Tx = {
   description: string | null;
   handler1_id: string | null;
   handler2_id: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 type AttachmentRow = {
@@ -68,6 +72,11 @@ export default function EditTransactionPage({ params }: { params: { id: string }
   const [categoryId, setCategoryId] = useState("");
   const [description, setDescription] = useState("");
 
+  const [createdBy, setCreatedBy] = useState<string | null>(null);
+  const [updatedBy, setUpdatedBy] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+
   // ✅ 经手人1/2
   const [handler1Id, setHandler1Id] = useState<string>("");
   const [handler2Id, setHandler2Id] = useState<string>("");
@@ -84,6 +93,23 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     if (!Number.isFinite(n) || n <= 0) return 0;
     return Math.round(n * 100);
   }, [amountYuan]);
+
+  const fmtDateTimeMaybe = (v: string | null) => {
+    if (!v) return "-";
+    const dt = new Date(v);
+    if (Number.isNaN(dt.getTime())) return "-";
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const d = String(dt.getDate()).padStart(2, "0");
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const mm = String(dt.getMinutes()).padStart(2, "0");
+    return `${y}-${m}-${d} ${hh}:${mm}`;
+  };
+
+  const shortId = (v: string | null) => {
+    if (!v) return "-";
+    return v.length > 8 ? `${v.slice(0, 8)}…` : v;
+  };
 
   const loadAttachments = async () => {
     setAttMsg("");
@@ -255,7 +281,9 @@ export default function EditTransactionPage({ params }: { params: { id: string }
 
         const { data: tx, error: txErr } = await supabase
           .from("transactions")
-          .select("id,date,amount,direction,account_id,category_id,description,handler1_id,handler2_id")
+          .select(
+            "id,date,amount,direction,account_id,category_id,description,handler1_id,handler2_id,created_by,updated_by,created_at,updated_at"
+          )
           .eq("id", id)
           .single();
 
@@ -274,6 +302,11 @@ export default function EditTransactionPage({ params }: { params: { id: string }
 
         setHandler1Id(t.handler1_id ? String(t.handler1_id) : "");
         setHandler2Id(t.handler2_id ? String(t.handler2_id) : "");
+
+        setCreatedBy(t.created_by ? String(t.created_by) : null);
+        setUpdatedBy(t.updated_by ? String(t.updated_by) : null);
+        setCreatedAt(t.created_at ? String(t.created_at) : null);
+        setUpdatedAt(t.updated_at ? String(t.updated_at) : null);
 
         await loadAttachments();
       } catch (e: any) {
@@ -338,6 +371,13 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       </div>
 
       {!!msg && <div style={{ background: "#fff3cd", padding: 10, borderRadius: 8 }}>{msg}</div>}
+
+      <div style={{ marginTop: 12, padding: 10, background: "#f5f5f5", borderRadius: 8, fontSize: 12 }}>
+        <div>创建人：{shortId(createdBy)}</div>
+        <div>创建时间：{fmtDateTimeMaybe(createdAt)}</div>
+        <div>最后修改人：{shortId(updatedBy)}</div>
+        <div>最后修改时间：{fmtDateTimeMaybe(updatedAt)}</div>
+      </div>
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 12 }}>
         <label>
