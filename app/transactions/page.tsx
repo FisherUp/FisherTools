@@ -593,6 +593,12 @@ export default function TransactionsPage() {
             + 新增
           </a>
 
+          {userRole === "admin" && (
+            <a href="/members" style={{ padding: "8px 12px", fontWeight: 700 }}>
+              经手人管理
+            </a>
+          )}
+
           <button
             onClick={async () => {
               await supabase.auth.signOut();
