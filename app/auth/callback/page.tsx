@@ -52,15 +52,30 @@ export default function AuthCallbackPage() {
           return;
         }
 
-        // ✅ 兼容 Supabase recovery 链接（token 在 URL hash 中）
         const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
-        const accessToken = hashParams.get("access_token");
-        const refreshToken = hashParams.get("refresh_token");
+        const accessToken = hashParams.get("access_token") ?? url.searchParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token") ?? url.searchParams.get("refresh_token");
 
         if (accessToken && refreshToken) {
           const { error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
+          });
+          if (error) {
+            setMsg("登录回调失败：" + error.message);
+            return;
+          }
+          router.replace(next);
+          return;
+        }
+
+        const tokenHash = hashParams.get("token_hash") ?? url.searchParams.get("token_hash");
+        const otpType = (hashParams.get("type") ?? url.searchParams.get("type") ?? "recovery") as any;
+
+        if (tokenHash) {
+          const { error } = await supabase.auth.verifyOtp({
+            type: otpType,
+            token_hash: tokenHash,
           });
           if (error) {
             setMsg("登录回调失败：" + error.message);
