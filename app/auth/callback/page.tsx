@@ -52,6 +52,24 @@ export default function AuthCallbackPage() {
           return;
         }
 
+        // ✅ 兼容 Supabase recovery 链接（token 在 URL hash 中）
+        const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+
+        if (accessToken && refreshToken) {
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) {
+            setMsg("登录回调失败：" + error.message);
+            return;
+          }
+          router.replace(next);
+          return;
+        }
+        
         // 没有 code：看看是否已有 session（兼容某些链接）
         const { data } = await supabase.auth.getSession();
         if (data.session) {
