@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../../lib/supabaseClient";
+import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
 
 type Account = { id: string; name: string; type: "cash" | "bank" };
 type Category = { id: string; name: string };
@@ -77,6 +78,8 @@ export default function EditTransactionPage({ params }: { params: { id: string }
   const [createdAt, setCreatedAt] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
+  const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
+
   // ✅ 经手人1/2
   const [handler1Id, setHandler1Id] = useState<string>("");
   const [handler2Id, setHandler2Id] = useState<string>("");
@@ -106,10 +109,6 @@ export default function EditTransactionPage({ params }: { params: { id: string }
     return `${y}-${m}-${d} ${hh}:${mm}`;
   };
 
-  const shortId = (v: string | null) => {
-    if (!v) return "-";
-    return v.length > 8 ? `${v.slice(0, 8)}…` : v;
-  };
 
   const loadAttachments = async () => {
     setAttMsg("");
@@ -303,10 +302,20 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         setHandler1Id(t.handler1_id ? String(t.handler1_id) : "");
         setHandler2Id(t.handler2_id ? String(t.handler2_id) : "");
 
-        setCreatedBy(t.created_by ? String(t.created_by) : null);
-        setUpdatedBy(t.updated_by ? String(t.updated_by) : null);
+        const cb = t.created_by ? String(t.created_by) : null;
+        const ub = t.updated_by ? String(t.updated_by) : null;
+        setCreatedBy(cb);
+        setUpdatedBy(ub);
         setCreatedAt(t.created_at ? String(t.created_at) : null);
         setUpdatedAt(t.updated_at ? String(t.updated_at) : null);
+
+        const ids = Array.from(new Set([cb, ub].filter(Boolean) as string[]));
+        if (orgId && ids.length > 0) {
+          const displayMap = await fetchUserDisplayMap(ids, orgId);
+          setUserDisplayMap(displayMap);
+        } else {
+          setUserDisplayMap(new Map());
+        }
 
         await loadAttachments();
       } catch (e: any) {
@@ -373,9 +382,9 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       {!!msg && <div style={{ background: "#fff3cd", padding: 10, borderRadius: 8 }}>{msg}</div>}
 
       <div style={{ marginTop: 12, padding: 10, background: "#f5f5f5", borderRadius: 8, fontSize: 12 }}>
-        <div>创建人：{shortId(createdBy)}</div>
+        <div>创建人：{resolveUserDisplay(createdBy, userDisplayMap)}</div>
         <div>创建时间：{fmtDateTimeMaybe(createdAt)}</div>
-        <div>最后修改人：{shortId(updatedBy)}</div>
+        <div>最后修改人：{resolveUserDisplay(updatedBy, userDisplayMap)}</div>
         <div>最后修改时间：{fmtDateTimeMaybe(updatedAt)}</div>
       </div>
 

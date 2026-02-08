@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
+import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
 
 type Row = {
   id: string;
@@ -83,10 +84,6 @@ function fmtDateTimeMaybe(v: string | null) {
   return fmtDateTime(dt);
 }
 
-function shortId(v: string | null) {
-  if (!v) return "-";
-  return v.length > 8 ? `${v.slice(0, 8)}…` : v;
-}
 
 export default function TransactionsPage() {
   // 默认选当前月份（YYYY-MM）
@@ -103,6 +100,9 @@ export default function TransactionsPage() {
 
   // ✅ members 映射：id -> name（用于显示经手人）
   const [memberMap, setMemberMap] = useState<Map<string, string>>(new Map());
+
+  // ✅ users 映射：id -> display（用于显示创建/修改人）
+  const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
 
   // 计算当月起止日期：例如 2025-12 -> [2025-12-01, 2026-01-01)
   const { fromDate, toDate } = useMemo(() => {
@@ -207,6 +207,17 @@ export default function TransactionsPage() {
         : [];
 
       setRows(list);
+
+      const userIds = Array.from(
+        new Set(list.flatMap((r) => [r.created_by, r.updated_by]).filter(Boolean) as string[])
+      );
+
+      if (orgId) {
+        const displayMap = await fetchUserDisplayMap(userIds, orgId);
+        setUserDisplayMap(displayMap);
+      } else {
+        setUserDisplayMap(new Map());
+      }
 
       // ✅ 拉取经手人名字（批量）
       const ids = Array.from(
@@ -712,9 +723,13 @@ export default function TransactionsPage() {
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h1}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{h2}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.description ?? ""}</td>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{shortId(r.created_by)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                      {resolveUserDisplay(r.created_by, userDisplayMap)}
+                    </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.created_at)}</td>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{shortId(r.updated_by)}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                      {resolveUserDisplay(r.updated_by, userDisplayMap)}
+                    </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.updated_at)}</td>
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
