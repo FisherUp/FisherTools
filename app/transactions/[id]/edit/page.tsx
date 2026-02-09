@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
 
-type Account = { id: string; name: string; type: "cash" | "bank" };
-type Category = { id: string; name: string };
+type Account = { id: string; name: string; type: "cash" | "bank"; is_active: boolean };
+type Category = { id: string; name: string; is_active: boolean };
 type Member = { id: string; name: string };
 
 type Tx = {
@@ -251,33 +251,6 @@ export default function EditTransactionPage({ params }: { params: { id: string }
       try {
         const { orgId } = await getMyProfile();
 
-        const [
-          { data: acc, error: accErr },
-          { data: cat, error: catErr },
-          { data: mem, error: memErr },
-        ] = await Promise.all([
-          supabase.from("accounts").select("id,name,type").order("created_at", { ascending: true }),
-          supabase.from("categories").select("id,name").order("created_at", { ascending: true }),
-          supabase
-            .from("members")
-            .select("id,name")
-            .eq("org_id", orgId)
-            .eq("is_active", true)
-            .order("name", { ascending: true }),
-        ]);
-
-        if (accErr) setMsg("加载账户失败：" + accErr.message);
-        if (catErr) setMsg("加载类别失败：" + catErr.message);
-        if (memErr) setMsg("加载成员失败：" + memErr.message);
-
-        setAccounts(acc ?? []);
-        setCategories(cat ?? []);
-        setMembers(
-          Array.isArray(mem)
-            ? mem.map((m: any) => ({ id: String(m.id), name: String(m.name) }))
-            : []
-        );
-
         const { data: tx, error: txErr } = await supabase
           .from("transactions")
           .select(
@@ -308,6 +281,78 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         setUpdatedBy(ub);
         setCreatedAt(t.created_at ? String(t.created_at) : null);
         setUpdatedAt(t.updated_at ? String(t.updated_at) : null);
+
+        const [
+          { data: acc, error: accErr },
+          { data: cat, error: catErr },
+          { data: mem, error: memErr },
+        ] = await Promise.all([
+          supabase
+            .from("accounts")
+            .select("id,name,type,is_active")
+            .eq("org_id", orgId)
+            .eq("is_active", true)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("categories")
+            .select("id,name,is_active")
+            .eq("org_id", orgId)
+            .eq("is_active", true)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("members")
+            .select("id,name")
+            .eq("org_id", orgId)
+            .eq("is_active", true)
+            .order("name", { ascending: true }),
+        ]);
+
+        if (accErr) setMsg("加载账户失败：" + accErr.message);
+        if (catErr) setMsg("加载类别失败：" + catErr.message);
+        if (memErr) setMsg("加载成员失败：" + memErr.message);
+
+        let accountRows = Array.isArray(acc) ? acc : [];
+        if (t.account_id && !accountRows.some((a: any) => String(a.id) === String(t.account_id))) {
+          const { data: accOne, error: accOneErr } = await supabase
+            .from("accounts")
+            .select("id,name,type,is_active")
+            .eq("org_id", orgId)
+            .eq("id", t.account_id)
+            .maybeSingle();
+          if (!accOneErr && accOne) accountRows = [...accountRows, accOne];
+        }
+
+        let categoryRows = Array.isArray(cat) ? cat : [];
+        if (t.category_id && !categoryRows.some((c: any) => String(c.id) === String(t.category_id))) {
+          const { data: catOne, error: catOneErr } = await supabase
+            .from("categories")
+            .select("id,name,is_active")
+            .eq("org_id", orgId)
+            .eq("id", t.category_id)
+            .maybeSingle();
+          if (!catOneErr && catOne) categoryRows = [...categoryRows, catOne];
+        }
+
+        setAccounts(
+          accountRows.map((a: any) => ({
+            id: String(a.id),
+            name: String(a.name),
+            type: a.type === "bank" ? "bank" : "cash",
+            is_active: Boolean(a.is_active),
+          }))
+        );
+        setCategories(
+          categoryRows.map((c: any) => ({
+            id: String(c.id),
+            name: String(c.name),
+            is_active: Boolean(c.is_active),
+          }))
+        );
+        setMembers(
+          Array.isArray(mem)
+            ? mem.map((m: any) => ({ id: String(m.id), name: String(m.name) }))
+            : []
+        );
 
         const ids = Array.from(new Set([cb, ub].filter(Boolean) as string[]));
         if (orgId && ids.length > 0) {
@@ -410,22 +455,29 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         <label>
           账户：
           <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}（{a.type === "cash" ? "现金" : "银行卡"}）
-              </option>
-            ))}
+            {accounts.map((a) => {
+              const typeLabel = a.type === "cash" ? "现金" : "银行卡";
+              const inactiveLabel = a.is_active ? "" : "（已停用）";
+              return (
+                <option key={a.id} value={a.id}>
+                  {a.name}（{typeLabel}）{inactiveLabel}
+                </option>
+              );
+            })}
           </select>
         </label>
 
         <label>
           类别：
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
+            {categories.map((c) => {
+              const inactiveLabel = c.is_active ? "" : "（已停用）";
+              return (
+                <option key={c.id} value={c.id}>
+                  {c.name}{inactiveLabel}
+                </option>
+              );
+            })}
           </select>
         </label>
 

@@ -641,6 +641,18 @@ export default function TransactionsPage() {
             </a>
           )}
 
+          {userRole === "admin" && (
+            <a href="/accounts" style={{ padding: "8px 12px", fontWeight: 700 }}>
+              账户管理
+            </a>
+          )}
+
+          {userRole === "admin" && (
+            <a href="/categories" style={{ padding: "8px 12px", fontWeight: 700 }}>
+              类别管理
+            </a>
+          )}
+
           <button
             onClick={async () => {
               await supabase.auth.signOut();
@@ -684,7 +696,7 @@ export default function TransactionsPage() {
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>金额（元）</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>账户</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人1</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>1</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人2</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>备注</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建人</th>

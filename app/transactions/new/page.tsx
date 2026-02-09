@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 
-type Account = { id: string; name: string; type: "cash" | "bank" };
-type Category = { id: string; name: string };
+type Account = { id: string; name: string; type: "cash" | "bank"; is_active: boolean };
+type Category = { id: string; name: string; is_active: boolean };
 type Member = { id: string; name: string };
 
 async function getMyProfile() {
@@ -60,8 +60,18 @@ export default function NewTransactionPage() {
 
         const [{ data: accData, error: accErr }, { data: catData, error: catErr }, { data: memData, error: memErr }] =
           await Promise.all([
-            supabase.from("accounts").select("id,name,type").order("created_at", { ascending: true }),
-            supabase.from("categories").select("id,name").order("created_at", { ascending: true }),
+            supabase
+              .from("accounts")
+              .select("id,name,type,is_active")
+              .eq("org_id", orgId)
+              .eq("is_active", true)
+              .order("created_at", { ascending: true }),
+            supabase
+              .from("categories")
+              .select("id,name,is_active")
+              .eq("org_id", orgId)
+              .eq("is_active", true)
+              .order("created_at", { ascending: true }),
             supabase
               .from("members")
               .select("id,name")
