@@ -124,7 +124,7 @@ export default function TransactionsPage() {
       setUserRole("");
       setOrgId("");
       setOrgName("");
-      return;
+      return "";
     }
 
     setUserEmail(userRes.user.email ?? "");
@@ -151,9 +151,10 @@ export default function TransactionsPage() {
       }
       setOrgName(oname);
     }
+    return (profile as any)?.org_id ? String((profile as any).org_id) : "";
   };
 
-  const load = async () => {
+  const load = async (orgIdOverride?: string) => {
     setLoading(true);
     setMsg("");
     try {
@@ -212,8 +213,10 @@ export default function TransactionsPage() {
         new Set(list.flatMap((r) => [r.created_by, r.updated_by]).filter(Boolean) as string[])
       );
 
-      if (orgId) {
-        const displayMap = await fetchUserDisplayMap(userIds, orgId);
+      const resolvedOrgId = orgIdOverride ?? orgId;
+
+      if (resolvedOrgId) {
+        const displayMap = await fetchUserDisplayMap(userIds, resolvedOrgId);
         setUserDisplayMap(displayMap);
       } else {
         setUserDisplayMap(new Map());
@@ -516,8 +519,12 @@ export default function TransactionsPage() {
   };
 
   useEffect(() => {
-    loadCurrentUser();
-    load();
+    const loadAll = async () => {
+      const oid = await loadCurrentUser();
+      await load(oid);
+    };
+
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
