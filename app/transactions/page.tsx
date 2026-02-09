@@ -21,6 +21,28 @@ type Row = {
   handler2_id: string | null;
 };
 
+type CategoryRow = {
+  id: string;
+  name: string;
+  is_active: boolean;
+};
+
+type BudgetRow = {
+  category_id: string;
+  amount: number;
+  year: number;
+  is_enabled: boolean;
+};
+
+type BudgetSummaryRow = {
+  categoryId: string;
+  categoryName: string;
+  isActive: boolean;
+  budgetAmount: number | null;
+  usedAmount: number;
+  remainingAmount: number | null;
+};
+
 function formatYuanFromFen(fen: number) {
   return (fen / 100).toFixed(2);
 }
@@ -103,6 +125,12 @@ export default function TransactionsPage() {
 
   // ✅ users 映射：id -> display（用于显示创建/修改人）
   const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
+
+  // ✅ 预算汇总（按分类）
+  const [budgetSummary, setBudgetSummary] = useState<BudgetSummaryRow[]>([]);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const [budgetMsg, setBudgetMsg] = useState("");
+  const [budgetCollapsed, setBudgetCollapsed] = useState(false);
 
   // 计算当月起止日期：例如 2025-12 -> [2025-12-01, 2026-01-01)
   const { fromDate, toDate } = useMemo(() => {
@@ -245,6 +273,107 @@ export default function TransactionsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadBudgetSummary = async (orgIdOverride?: string) => {
+    const resolvedOrgId = orgIdOverride ?? orgId;
+    if (!resolvedOrgId) {
+      setBudgetSummary([]);
+      return;
+    }
+
+    const year = Number(month.slice(0, 4));
+    const yearStart = `${year}-01-01`;
+
+    setBudgetLoading(true);
+    setBudgetMsg("");
+    try {
+      const [budRes, catRes, txRes] = await Promise.all([
+        supabase
+          .from("category_budgets")
+          .select("category_id, amount, year, is_enabled")
+          .eq("org_id", resolvedOrgId)
+          .eq("year", year)
+          .eq("is_enabled", true),
+        supabase
+          .from("categories")
+          .select("id,name,is_active")
+          .eq("org_id", resolvedOrgId)
+          .order("name", { ascending: true }),
+        supabase
+          .from("transactions")
+          .select("category_id, amount")
+          .eq("org_id", resolvedOrgId)
+          .eq("direction", "expense")
+          .gte("date", yearStart)
+          .lt("date", toDate),
+      ]);
+
+      if (budRes.error) setBudgetMsg("加载预算失败：" + budRes.error.message);
+      if (catRes.error) setBudgetMsg("加载类别失败：" + catRes.error.message);
+      if (txRes.error) setBudgetMsg("加载年度支出失败：" + txRes.error.message);
+
+      const categoryRows: CategoryRow[] = Array.isArray(catRes.data)
+        ? catRes.data.map((c: any) => ({
+            id: String(c.id),
+            name: String(c.name),
+            is_active: Boolean(c.is_active),
+          }))
+        : [];
+
+      const budgetMap = new Map<string, BudgetRow>();
+      (budRes.data ?? []).forEach((b: any) => {
+        budgetMap.set(String(b.category_id), {
+          category_id: String(b.category_id),
+          amount: Number(b.amount),
+          year: Number(b.year),
+          is_enabled: Boolean(b.is_enabled),
+        });
+      });
+
+      const usedMap = new Map<string, number>();
+      (txRes.data ?? []).forEach((t: any) => {
+        const cid = t.category_id ? String(t.category_id) : "";
+        if (!cid) return;
+        usedMap.set(cid, (usedMap.get(cid) ?? 0) + Number(t.amount || 0));
+      });
+
+      const categoryMap = new Map<string, CategoryRow>();
+      categoryRows.forEach((c) => categoryMap.set(c.id, c));
+
+      const allIds = new Set<string>([
+        ...Array.from(categoryMap.keys()),
+        ...Array.from(budgetMap.keys()),
+        ...Array.from(usedMap.keys()),
+      ]);
+
+      const summaryRows: BudgetSummaryRow[] = Array.from(allIds).map((id) => {
+        const cat = categoryMap.get(id);
+        const bud = budgetMap.get(id);
+        const used = usedMap.get(id) ?? 0;
+        const budgetAmount = bud ? bud.amount : null;
+        const remainingAmount = budgetAmount === null ? null : budgetAmount - used;
+        return {
+          categoryId: id,
+          categoryName: cat?.name ?? "未分类",
+          isActive: cat?.is_active ?? true,
+          budgetAmount,
+          usedAmount: used,
+          remainingAmount,
+        };
+      });
+
+      summaryRows.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+      setBudgetSummary(summaryRows);
+    } finally {
+      setBudgetLoading(false);
+    }
+  };
+
+  const reloadAll = async () => {
+    const oid = orgId || (await loadCurrentUser());
+    await load(oid);
+    await loadBudgetSummary(oid);
   };
 
   // 删除一条流水
@@ -522,6 +651,7 @@ export default function TransactionsPage() {
     const loadAll = async () => {
       const oid = await loadCurrentUser();
       await load(oid);
+      await loadBudgetSummary(oid);
     };
 
     loadAll();
@@ -538,6 +668,8 @@ export default function TransactionsPage() {
     }
     return { income, expense, net: income - expense };
   }, [rows]);
+
+  const budgetYear = month.slice(0, 4);
 
   return (
     <div style={{ maxWidth: 1150, margin: "40px auto", padding: 16 }}>
@@ -593,7 +725,7 @@ export default function TransactionsPage() {
             />
           </label>
 
-          <button onClick={load} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
+          <button onClick={reloadAll} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
             {loading ? "刷新中..." : "刷新"}
           </button>
 
@@ -653,6 +785,12 @@ export default function TransactionsPage() {
             </a>
           )}
 
+          {userRole === "admin" && (
+            <a href="/budgets" style={{ padding: "8px 12px", fontWeight: 700 }}>
+              预算管理
+            </a>
+          )}
+
           <button
             onClick={async () => {
               await supabase.auth.signOut();
@@ -679,6 +817,82 @@ export default function TransactionsPage() {
         <div style={{ background: "#f5f5f5", padding: 10, borderRadius: 8 }}>
           净额：<b>{formatYuanFromFen(summary.net)}</b> 元
         </div>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{ fontWeight: 800, marginBottom: 6, cursor: "pointer", userSelect: "none", display: "flex", alignItems: "center", gap: 6 }}
+          onClick={() => setBudgetCollapsed((v) => !v)}
+        >
+          <span style={{ fontSize: 12, display: "inline-block", transition: "transform 0.15s", transform: budgetCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>▼</span>
+          预算概览（{budgetYear} 年）
+        </div>
+
+        {!budgetCollapsed && (
+          <>
+            <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+              已使用金额统计口径：当年 1 月 1 日起至当前月月底（不含次月 1 日）的支出合计。
+            </div>
+
+            {!!budgetMsg && (
+              <div style={{ padding: 10, background: "#fff3cd", borderRadius: 8, marginBottom: 8 }}>
+                {budgetMsg}
+              </div>
+            )}
+
+            <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+                <thead>
+                  <tr style={{ background: "#fafafa" }}>
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
+                    <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>年度预算（元）</th>
+                    <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>已使用（元）</th>
+                    <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>剩余预算（元）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {budgetSummary.length === 0 && !budgetLoading ? (
+                    <tr>
+                      <td colSpan={4} style={{ padding: 14, color: "#666" }}>
+                        暂无预算数据
+                      </td>
+                    </tr>
+                  ) : (
+                    budgetSummary.map((b) => {
+                      const over = b.remainingAmount !== null && b.remainingAmount <= 0;
+                      const remainText = b.remainingAmount === null ? "-" : formatYuanFromFen(b.remainingAmount);
+                      return (
+                        <tr key={b.categoryId}>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
+                            {b.categoryName}
+                            {!b.isActive ? "（已停用）" : ""}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
+                            {b.budgetAmount === null ? "未设置" : formatYuanFromFen(b.budgetAmount)}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
+                            {formatYuanFromFen(b.usedAmount)}
+                          </td>
+                          <td
+                            style={{
+                              padding: 10,
+                              borderBottom: "1px solid #f0f0f0",
+                              textAlign: "right",
+                              color: over ? "#c00" : "#333",
+                              fontWeight: over ? 700 : 400,
+                            }}
+                          >
+                            {b.remainingAmount === null ? "-" : remainText}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       {!!msg && (
