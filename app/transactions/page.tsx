@@ -696,7 +696,7 @@ export default function TransactionsPage() {
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>金额（元）</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>账户</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>1</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人1</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人2</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>备注</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建人</th>
