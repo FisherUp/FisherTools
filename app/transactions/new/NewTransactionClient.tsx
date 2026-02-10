@@ -88,7 +88,7 @@ export default function NewTransactionClient() {
         setCategories(catData ?? []);
         setMembers(
           Array.isArray(memData)
-            ? memData.map((m: any) => ({ id: String(m.id), name: String(m.name) }))
+            ? memData.map((m) => ({ id: String(m.id), name: String(m.name) }))
             : []
         );
 
@@ -100,8 +100,8 @@ export default function NewTransactionClient() {
 
         if ((accData?.length ?? 0) === 0) setMsg("提示：accounts 表还没有数据，请先插入账户。");
         if ((catData?.length ?? 0) === 0) setMsg("提示：categories 表还没有数据，请先插入类别。");
-      } catch (e: any) {
-        setMsg(String(e?.message ?? e));
+      } catch (e) {
+        setMsg(String((e as Error)?.message ?? e));
       }
     };
 
@@ -185,7 +185,7 @@ export default function NewTransactionClient() {
           类型：
           <select
             value={direction}
-            onChange={(e) => setDirection(e.target.value as any)}
+            onChange={(e) => setDirection(e.target.value as "expense" | "income")}
             style={{ display: "block", width: "100%", padding: 8, marginTop: 6 }}
           >
             <option value="expense">支出</option>
@@ -202,7 +202,7 @@ export default function NewTransactionClient() {
             onChange={(e) => setAmountYuan(e.target.value)}
             style={{ display: "block", width: "100%", padding: 8, marginTop: 6 }}
           />
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>将保存为"分"（整数）：{amountFen} 分</div>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>将保存为&ldquo;分&rdquo;（整数）：{amountFen} 分</div>
         </label>
 
         <label>
