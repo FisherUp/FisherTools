@@ -377,11 +377,8 @@ export default function TransactionsClient() {
       const categoryMap = new Map<string, CategoryRow>();
       categoryRows.forEach((c) => categoryMap.set(c.id, c));
 
-      const allIds = new Set<string>([
-        ...Array.from(categoryMap.keys()),
-        ...Array.from(budgetMap.keys()),
-        ...Array.from(usedMap.keys()),
-      ]);
+      // ✅ 仅以有预算记录的 category 为基准，未设置预算的类别不参与概览
+      const allIds = new Set<string>(Array.from(budgetMap.keys()));
 
       const summaryRows: BudgetSummaryRow[] = Array.from(allIds).map((id) => {
         const cat = categoryMap.get(id);
