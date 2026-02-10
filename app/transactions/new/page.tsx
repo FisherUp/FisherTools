@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Account = { id: string; name: string; type: "cash" | "bank"; is_active: boolean };
@@ -26,6 +27,16 @@ async function getMyProfile() {
 }
 
 export default function NewTransactionPage() {
+  const searchParams = useSearchParams();
+
+  // ✅ 返回列表时保留来源月份
+  const backUrl = useMemo(() => {
+    const fy = searchParams.get("from_year");
+    const fm = searchParams.get("from_month");
+    if (fy && fm) return `/transactions?year=${fy}&month=${fm}`;
+    return "/transactions";
+  }, [searchParams]);
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -157,7 +168,7 @@ export default function NewTransactionPage() {
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <a
-            href="/transactions"
+            href={backUrl}
             style={{
               padding: "8px 12px",
               border: "1px solid #ddd",

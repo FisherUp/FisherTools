@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import jsPDF from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
@@ -108,8 +109,43 @@ function fmtDateTimeMaybe(v: string | null) {
 
 
 export default function TransactionsPage() {
-  // 默认选当前月份（YYYY-MM）
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // ✅ 从 URL search params 读取 year/month，缺省取当前年月
+  const month = useMemo(() => {
+    const now = new Date();
+    const y = searchParams.get("year") ?? String(now.getFullYear());
+    const m = searchParams.get("month") ?? String(now.getMonth() + 1);
+    return `${y}-${String(Number(m)).padStart(2, "0")}`;
+  }, [searchParams]);
+
+  const setMonth = useCallback(
+    (val: string) => {
+      const [y, m] = val.split("-");
+      router.replace(`/transactions?year=${Number(y)}&month=${Number(m)}`);
+    },
+    [router]
+  );
+
+  // ✅ 月份前后切换
+  const goPrevMonth = useCallback(() => {
+    const [y, m] = month.split("-").map(Number);
+    const prev = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 };
+    router.replace(`/transactions?year=${prev.y}&month=${prev.m}`);
+  }, [month, router]);
+
+  const goNextMonth = useCallback(() => {
+    const [y, m] = month.split("-").map(Number);
+    const next = m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 };
+    router.replace(`/transactions?year=${next.y}&month=${next.m}`);
+  }, [month, router]);
+
+  const isNextDisabled = useMemo(() => {
+    const now = new Date();
+    const [y, m] = month.split("-").map(Number);
+    return y > now.getFullYear() || (y === now.getFullYear() && m >= now.getMonth() + 1);
+  }, [month]);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -130,7 +166,7 @@ export default function TransactionsPage() {
   const [budgetSummary, setBudgetSummary] = useState<BudgetSummaryRow[]>([]);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetMsg, setBudgetMsg] = useState("");
-  const [budgetCollapsed, setBudgetCollapsed] = useState(false);
+  const [budgetCollapsed, setBudgetCollapsed] = useState(true);
 
   // 计算当月起止日期：例如 2025-12 -> [2025-12-01, 2026-01-01)
   const { fromDate, toDate } = useMemo(() => {
@@ -715,15 +751,37 @@ export default function TransactionsPage() {
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <label style={{ fontSize: 14 }}>
-            月份：
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}>
+            <button
+              onClick={goPrevMonth}
+              style={{ padding: "4px 8px", fontWeight: 700, cursor: "pointer", border: "1px solid #ccc", borderRadius: 4, background: "#fff" }}
+              title="上个月"
+            >
+              ◀
+            </button>
             <input
               type="month"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              style={{ marginLeft: 8, padding: 6 }}
+              style={{ padding: 6 }}
             />
-          </label>
+            <button
+              onClick={goNextMonth}
+              disabled={isNextDisabled}
+              style={{
+                padding: "4px 8px",
+                fontWeight: 700,
+                cursor: isNextDisabled ? "not-allowed" : "pointer",
+                border: "1px solid #ccc",
+                borderRadius: 4,
+                background: "#fff",
+                opacity: isNextDisabled ? 0.4 : 1,
+              }}
+              title="下个月"
+            >
+              ▶
+            </button>
+          </div>
 
           <button onClick={reloadAll} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
             {loading ? "刷新中..." : "刷新"}
@@ -763,7 +821,7 @@ export default function TransactionsPage() {
             PDF导出
           </button>
 
-          <a href="/transactions/new" style={{ padding: "8px 12px", fontWeight: 700 }}>
+          <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
             + 新增
           </a>
 
@@ -967,7 +1025,7 @@ export default function TransactionsPage() {
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
                       <a
-                        href={`/transactions/${r.id}/edit`}
+                        href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
                         style={{
                           marginRight: 10,
                           color: "#0366d6",

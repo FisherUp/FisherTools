@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
 
@@ -61,6 +62,15 @@ async function getMyProfile() {
 
 export default function EditTransactionPage({ params }: { params: { id: string } }) {
   const id = params.id;
+  const searchParams = useSearchParams();
+
+  // ✅ 返回列表时保留来源月份
+  const backUrl = useMemo(() => {
+    const fy = searchParams.get("from_year");
+    const fm = searchParams.get("from_month");
+    if (fy && fm) return `/transactions?year=${fy}&month=${fm}`;
+    return "/transactions";
+  }, [searchParams]);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -415,10 +425,10 @@ export default function EditTransactionPage({ params }: { params: { id: string }
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>编辑流水</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
+          <a href={backUrl} style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             ← 返回列表
           </a>
-          <a href="/transactions/new" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
+          <a href={`/transactions/new?from_year=${searchParams.get("from_year") ?? ""}&from_month=${searchParams.get("from_month") ?? ""}`} style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             + 新增
           </a>
         </div>
