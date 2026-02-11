@@ -44,6 +44,22 @@ type BudgetSummaryRow = {
   remainingAmount: number | null;
 };
 
+type YearOverview = {
+  budgetTotal: number;   // 年度预算总额（分）
+  incomeTotal: number;   // 年度累计收入（分）
+  timeProgress: number;  // 年度时间进度 (0~1)
+  incomeRate: number | null;  // 收入完成率 (null if budgetTotal=0)
+};
+
+/** 计算年度时间进度：所选月份月末是当年第几天 / 全年总天数 */
+function calcTimeProgress(year: number, monthNum: number): number {
+  const endOfMonth = new Date(year, monthNum, 0); // 所选月份最后一天
+  const jan1 = new Date(year, 0, 1);
+  const dayOfYear = Math.floor((endOfMonth.getTime() - jan1.getTime()) / 86400000) + 1;
+  const totalDays = Math.floor((new Date(year + 1, 0, 1).getTime() - jan1.getTime()) / 86400000);
+  return dayOfYear / totalDays;
+}
+
 function formatYuanFromFen(fen: number) {
   return (fen / 100).toFixed(2);
 }
@@ -167,6 +183,9 @@ export default function TransactionsClient() {
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetMsg, setBudgetMsg] = useState("");
   const [budgetCollapsed, setBudgetCollapsed] = useState(true);
+
+  // ✅ 年度预算执行总览
+  const [yearOverview, setYearOverview] = useState<YearOverview | null>(null);
 
   // 计算当月起止日期：例如 2025-12 -> [2025-12-01, 2026-01-01)
   const { fromDate, toDate } = useMemo(() => {
@@ -324,7 +343,7 @@ export default function TransactionsClient() {
     setBudgetLoading(true);
     setBudgetMsg("");
     try {
-      const [budRes, catRes, txRes] = await Promise.all([
+      const [budRes, catRes, txRes, incomeRes] = await Promise.all([
         supabase
           .from("category_budgets")
           .select("category_id, amount, year, is_enabled")
@@ -343,11 +362,20 @@ export default function TransactionsClient() {
           .eq("direction", "expense")
           .gte("date", yearStart)
           .lt("date", toDate),
+        // ✅ 新增：年度累计收入查询
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("org_id", resolvedOrgId)
+          .eq("direction", "income")
+          .gte("date", yearStart)
+          .lt("date", toDate),
       ]);
 
       if (budRes.error) setBudgetMsg("加载预算失败：" + budRes.error.message);
       if (catRes.error) setBudgetMsg("加载类别失败：" + catRes.error.message);
       if (txRes.error) setBudgetMsg("加载年度支出失败：" + txRes.error.message);
+      if (incomeRes.error) setBudgetMsg("加载年度收入失败：" + incomeRes.error.message);
 
       const categoryRows: CategoryRow[] = Array.isArray(catRes.data)
         ? catRes.data.map((c: any) => ({
@@ -398,6 +426,14 @@ export default function TransactionsClient() {
 
       summaryRows.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
       setBudgetSummary(summaryRows);
+
+      // ✅ 计算年度预算执行总览
+      const budgetTotal = summaryRows.reduce((s, r) => s + (r.budgetAmount ?? 0), 0);
+      const incomeTotal = (incomeRes.data ?? []).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+      const monthNum = Number(month.slice(5, 7));
+      const timeProgress = calcTimeProgress(year, monthNum);
+      const incomeRate = budgetTotal > 0 ? incomeTotal / budgetTotal : null;
+      setYearOverview({ budgetTotal, incomeTotal, timeProgress, incomeRate });
     } finally {
       setBudgetLoading(false);
     }
@@ -886,7 +922,7 @@ export default function TransactionsClient() {
         {!budgetCollapsed && (
           <>
             <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
-              已使用金额统计口径：当年 1 月 1 日起至当前月月底（不含次月 1 日）的支出合计。
+              统计口径：当年 1 月 1 日起至所选月份月底。收入 = direction=income，支出 = direction=expense。
             </div>
 
             {!!budgetMsg && (
@@ -895,20 +931,60 @@ export default function TransactionsClient() {
               </div>
             )}
 
+            {/* ====== 年度预算执行总览 ====== */}
+            {yearOverview && (
+              <div style={{ background: "#f8f9fb", border: "1px solid #e4e8ee", borderRadius: 10, padding: 16, marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>年度预算执行总览</div>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+                  <div>
+                    年度计划总额：<b>¥{formatYuanFromFen(yearOverview.budgetTotal)}</b>
+                  </div>
+                  <div>
+                    当前累计收入：<b>¥{formatYuanFromFen(yearOverview.incomeTotal)}</b>
+                  </div>
+                  <div>
+                    收入完成率：<b>{yearOverview.incomeRate !== null ? (yearOverview.incomeRate * 100).toFixed(1) + "%" : "N/A"}</b>
+                  </div>
+                  <div>
+                    年度时间进度：<b>{(yearOverview.timeProgress * 100).toFixed(1)}%</b>
+                  </div>
+                </div>
+                {yearOverview.incomeRate !== null && (
+                  <div style={{ marginTop: 8, fontSize: 13 }}>
+                    {yearOverview.incomeRate >= yearOverview.timeProgress ? (
+                      <span style={{ color: "#28a745", fontWeight: 700 }}>
+                        ✅ 执行进度领先年度计划节奏（领先 {((yearOverview.incomeRate - yearOverview.timeProgress) * 100).toFixed(1)} 个百分点）
+                      </span>
+                    ) : (
+                      <span style={{ color: "#e67e22", fontWeight: 700 }}>
+                        ⚠ 执行进度滞后于年度计划（差距 {((yearOverview.timeProgress - yearOverview.incomeRate) * 100).toFixed(1)} 个百分点）
+                      </span>
+                    )}
+                  </div>
+                )}
+                {yearOverview.budgetTotal === 0 && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>年度预算总额为 0，无法计算收入完成率。</div>
+                )}
+              </div>
+            )}
+
+            {/* ====== 分类预算明细表 ====== */}
             <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
                 <thead>
                   <tr style={{ background: "#fafafa" }}>
                     <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
                     <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>年度预算（元）</th>
                     <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>已使用（元）</th>
                     <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>剩余预算（元）</th>
+                    <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>使用比例</th>
+                    <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee" }}>执行节奏</th>
                   </tr>
                 </thead>
                 <tbody>
                   {budgetSummary.length === 0 && !budgetLoading ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: 14, color: "#666" }}>
+                      <td colSpan={6} style={{ padding: 14, color: "#666" }}>
                         暂无预算数据
                       </td>
                     </tr>
@@ -916,6 +992,20 @@ export default function TransactionsClient() {
                     budgetSummary.map((b) => {
                       const over = b.remainingAmount !== null && b.remainingAmount <= 0;
                       const remainText = b.remainingAmount === null ? "-" : formatYuanFromFen(b.remainingAmount);
+
+                      // 使用比例
+                      const usageRatio = b.budgetAmount && b.budgetAmount > 0 ? b.usedAmount / b.budgetAmount : null;
+                      const usageRatioText = usageRatio !== null ? (usageRatio * 100).toFixed(1) + "%" : "-";
+
+                      // 执行节奏判断
+                      const tp = yearOverview?.timeProgress ?? 0;
+                      const theoreticalBudget = b.budgetAmount ? b.budgetAmount * tp : 0;
+                      const paceFast = b.budgetAmount && b.budgetAmount > 0 && b.usedAmount > theoreticalBudget;
+
+                      // 颜色：超预算→红 | 节奏偏快但未超→橙 | 正常→默认
+                      const paceColor = over ? "#c00" : paceFast ? "#e67e22" : "#28a745";
+                      const paceText = over ? "⚠ 已超预算" : paceFast ? "⚠ 支出节奏偏快" : "✓ 支出节奏正常";
+
                       return (
                         <tr key={b.categoryId}>
                           <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
@@ -938,6 +1028,21 @@ export default function TransactionsClient() {
                             }}
                           >
                             {b.remainingAmount === null ? "-" : remainText}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
+                            {usageRatioText}
+                          </td>
+                          <td
+                            style={{
+                              padding: 10,
+                              borderBottom: "1px solid #f0f0f0",
+                              textAlign: "center",
+                              color: paceColor,
+                              fontWeight: 600,
+                              fontSize: 12,
+                            }}
+                          >
+                            {b.budgetAmount && b.budgetAmount > 0 ? paceText : "-"}
                           </td>
                         </tr>
                       );
