@@ -882,6 +882,10 @@ export default function TransactionsClient() {
             </a>
           )}
 
+          <a href="/inventory" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            物资管理
+          </a>
+
           <button
             onClick={async () => {
               await supabase.auth.signOut();
