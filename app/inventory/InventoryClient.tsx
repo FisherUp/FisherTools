@@ -130,6 +130,9 @@ export default function InventoryClient() {
           <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             ← 返回流水
           </a>
+          <a href="/leaves" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
+            休假管理
+          </a>
         </div>
       </div>
 

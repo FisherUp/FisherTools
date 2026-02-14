@@ -324,7 +324,7 @@ export async function fetchMemberWorkloadStats(
     if (workload) {
       workload.totalCount++;
 
-      const serviceTypeName = assignment.service_types?.name || "未知";
+      const serviceTypeName = (assignment.service_types as any)?.name || "未知";
       const currentCount = workload.serviceTypes.get(serviceTypeName) || 0;
       workload.serviceTypes.set(serviceTypeName, currentCount + 1);
 

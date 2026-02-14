@@ -243,6 +243,18 @@ export default function ServicesClient() {
               </a>
             </>
           )}
+          <a
+            href="/leaves"
+            style={{
+              padding: "8px 12px",
+              border: "1px solid #999",
+              color: "#666",
+              borderRadius: 4,
+              textDecoration: "none",
+            }}
+          >
+            休假管理
+          </a>
         </div>
       </div>
 

@@ -913,6 +913,10 @@ export default function TransactionsClient() {
             服务排班
           </a>
 
+          <a href="/leaves" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            休假管理
+          </a>
+
           <button
             onClick={async () => {
               await supabase.auth.signOut();
