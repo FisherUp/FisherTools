@@ -133,6 +133,33 @@ export async function fetchServiceAssignments(
 }
 
 /**
+ * 获取单个服务安排
+ */
+export async function fetchServiceAssignment(id: string) {
+  const { data, error } = await supabase
+    .from("service_assignments")
+    .select(
+      `
+      id,
+      org_id,
+      service_type_id,
+      member_id,
+      service_date,
+      sermon_title,
+      notes,
+      status,
+      service_types (id, name, frequency),
+      members (id, name)
+    `
+    )
+    .eq("id", id)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
  * 创建单个服务安排
  */
 export async function createServiceAssignment(
