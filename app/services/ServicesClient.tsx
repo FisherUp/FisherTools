@@ -1,0 +1,806 @@
+"use client";
+
+import { useEffect, useState, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  fetchServiceAssignments,
+  fetchServiceTypes,
+  deleteServiceAssignment,
+} from "@/lib/services/serviceScheduling";
+import { fetchMembers } from "@/lib/services/inventoryService";
+
+interface ServiceAssignment {
+  id: string;
+  service_date: string;
+  notes: string | null;
+  status: string;
+  service_types: {
+    id: string;
+    name: string;
+    frequency: string;
+  } | null;
+  members: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+interface ServiceType {
+  id: string;
+  name: string;
+  frequency: string;
+}
+
+interface Member {
+  id: string;
+  name: string;
+}
+
+async function getMyProfile() {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) throw new Error("未登录");
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("org_id, role")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) throw new Error("无法获取用户信息");
+
+  return {
+    userId: user.id,
+    orgId: profile.org_id,
+    role: profile.role,
+  };
+}
+
+export default function ServicesClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [orgId, setOrgId] = useState("");
+  const [userRole, setUserRole] = useState("");
+  const [assignments, setAssignments] = useState<ServiceAssignment[]>([]);
+  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  // 视图模式
+  const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
+
+  // 筛选器
+  const [filterServiceType, setFilterServiceType] = useState("");
+  const [filterMember, setFilterMember] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+
+  // 日期范围（默认显示当前周 + 未来3周）
+  const today = useMemo(() => new Date(), []);
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - d.getDay()); // 本周日
+    return d.toISOString().split("T")[0];
+  });
+
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - d.getDay() + 27); // 未来4周的周六
+    return d.toISOString().split("T")[0];
+  });
+
+  useEffect(() => {
+    loadData();
+  }, [startDate, endDate]);
+
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const profile = await getMyProfile();
+      setOrgId(profile.orgId);
+      setUserRole(profile.role);
+
+      const [assignmentsData, typesData, membersData] = await Promise.all([
+        fetchServiceAssignments(profile.orgId, startDate, endDate),
+        fetchServiceTypes(profile.orgId),
+        fetchMembers(profile.orgId),
+      ]);
+
+      setAssignments(assignmentsData as any);
+      setServiceTypes(typesData);
+      setMembers(membersData);
+    } catch (err: any) {
+      setError(err.message || "加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function goPrevWeek() {
+    const start = new Date(startDate);
+    start.setDate(start.getDate() - 7);
+    const end = new Date(endDate);
+    end.setDate(end.getDate() - 7);
+    setStartDate(start.toISOString().split("T")[0]);
+    setEndDate(end.toISOString().split("T")[0]);
+  }
+
+  function goNextWeek() {
+    const start = new Date(startDate);
+    start.setDate(start.getDate() + 7);
+    const end = new Date(endDate);
+    end.setDate(end.getDate() + 7);
+    setStartDate(start.toISOString().split("T")[0]);
+    setEndDate(end.toISOString().split("T")[0]);
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("确定要删除这个服务安排吗？")) return;
+
+    try {
+      setError("");
+      setSuccess("");
+      await deleteServiceAssignment(id);
+      setSuccess("删除成功");
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "删除失败");
+    }
+  }
+
+  // 筛选后的安排
+  const filteredAssignments = useMemo(() => {
+    return assignments.filter((a) => {
+      if (filterServiceType && a.service_types?.id !== filterServiceType)
+        return false;
+      if (filterMember && a.members?.id !== filterMember) return false;
+      if (filterStatus && a.status !== filterStatus) return false;
+      return true;
+    });
+  }, [assignments, filterServiceType, filterMember, filterStatus]);
+
+  const isAdmin = userRole === "admin";
+
+  if (loading) {
+    return <div style={{ padding: 20 }}>加载中...</div>;
+  }
+
+  return (
+    <div style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
+      {/* 标题栏 */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 20,
+        }}
+      >
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>服务排班</h1>
+        <div style={{ display: "flex", gap: 10 }}>
+          {isAdmin && (
+            <>
+              <a
+                href="/services/types"
+                style={{
+                  padding: "8px 12px",
+                  border: "1px solid #999",
+                  color: "#666",
+                  borderRadius: 4,
+                  textDecoration: "none",
+                }}
+              >
+                服务类型管理
+              </a>
+              <a
+                href="/services/new"
+                style={{
+                  padding: "8px 12px",
+                  background: "#0366d6",
+                  color: "white",
+                  borderRadius: 4,
+                  textDecoration: "none",
+                  fontWeight: 700,
+                }}
+              >
+                + 单个排班
+              </a>
+              <a
+                href="/services/batch"
+                style={{
+                  padding: "8px 12px",
+                  background: "#1a7a1a",
+                  color: "white",
+                  borderRadius: 4,
+                  textDecoration: "none",
+                  fontWeight: 700,
+                }}
+              >
+                批量排班
+              </a>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 消息提示 */}
+      {error && (
+        <div
+          style={{
+            padding: 10,
+            background: "#ffe6e6",
+            color: "#c00",
+            borderRadius: 8,
+            marginBottom: 14,
+          }}
+        >
+          {error}
+        </div>
+      )}
+      {success && (
+        <div
+          style={{
+            padding: 10,
+            background: "#e6f9e6",
+            color: "#1a7a1a",
+            borderRadius: 8,
+            marginBottom: 14,
+          }}
+        >
+          {success}
+        </div>
+      )}
+
+      {/* 工具栏 */}
+      <div
+        style={{
+          background: "#f5f5f5",
+          padding: 14,
+          borderRadius: 8,
+          marginBottom: 20,
+        }}
+      >
+        {/* 日期导航 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 14,
+          }}
+        >
+          <button
+            onClick={goPrevWeek}
+            style={{
+              padding: "6px 12px",
+              border: "1px solid #ddd",
+              background: "white",
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+          >
+            ◀ 上周
+          </button>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            style={{
+              padding: 6,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+            }}
+          />
+          <span>至</span>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            style={{
+              padding: 6,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+            }}
+          />
+          <button
+            onClick={goNextWeek}
+            style={{
+              padding: "6px 12px",
+              border: "1px solid #ddd",
+              background: "white",
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+          >
+            下周 ▶
+          </button>
+        </div>
+
+        {/* 视图切换和筛选器 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          {/* 视图切换 */}
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              onClick={() => setViewMode("calendar")}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #ddd",
+                background: viewMode === "calendar" ? "#0366d6" : "white",
+                color: viewMode === "calendar" ? "white" : "#666",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontWeight: viewMode === "calendar" ? 700 : 400,
+              }}
+            >
+              日历视图
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              style={{
+                padding: "6px 12px",
+                border: "1px solid #ddd",
+                background: viewMode === "list" ? "#0366d6" : "white",
+                color: viewMode === "list" ? "white" : "#666",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontWeight: viewMode === "list" ? 700 : 400,
+              }}
+            >
+              列表视图
+            </button>
+          </div>
+
+          {/* 筛选器 */}
+          <select
+            value={filterServiceType}
+            onChange={(e) => setFilterServiceType(e.target.value)}
+            style={{
+              padding: 6,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              background: "white",
+            }}
+          >
+            <option value="">全部服务类型</option>
+            {serviceTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterMember}
+            onChange={(e) => setFilterMember(e.target.value)}
+            style={{
+              padding: 6,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              background: "white",
+            }}
+          >
+            <option value="">全部成员</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            style={{
+              padding: 6,
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              background: "white",
+            }}
+          >
+            <option value="">全部状态</option>
+            <option value="scheduled">已安排</option>
+            <option value="completed">已完成</option>
+            <option value="cancelled">已取消</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 视图内容 */}
+      {viewMode === "calendar" ? (
+        <CalendarView
+          assignments={filteredAssignments}
+          startDate={startDate}
+          endDate={endDate}
+          isAdmin={isAdmin}
+          onDelete={handleDelete}
+        />
+      ) : (
+        <ListView
+          assignments={filteredAssignments}
+          isAdmin={isAdmin}
+          onDelete={handleDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+// 日历视图组件
+function CalendarView({
+  assignments,
+  startDate,
+  endDate,
+  isAdmin,
+  onDelete,
+}: {
+  assignments: ServiceAssignment[];
+  startDate: string;
+  endDate: string;
+  isAdmin: boolean;
+  onDelete: (id: string) => void;
+}) {
+  // 生成日期范围内的所有日期
+  const dates = useMemo(() => {
+    const result: string[] = [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      result.push(d.toISOString().split("T")[0]);
+    }
+
+    return result;
+  }, [startDate, endDate]);
+
+  // 按日期分组
+  const assignmentsByDate = useMemo(() => {
+    const map = new Map<string, ServiceAssignment[]>();
+    assignments.forEach((a) => {
+      const list = map.get(a.service_date) || [];
+      list.push(a);
+      map.set(a.service_date, list);
+    });
+    return map;
+  }, [assignments]);
+
+  // 按周分组日期
+  const weeks = useMemo(() => {
+    const result: string[][] = [];
+    let currentWeek: string[] = [];
+
+    dates.forEach((date, index) => {
+      const dayOfWeek = new Date(date).getDay();
+
+      if (dayOfWeek === 0 && currentWeek.length > 0) {
+        result.push(currentWeek);
+        currentWeek = [];
+      }
+
+      currentWeek.push(date);
+
+      if (index === dates.length - 1) {
+        result.push(currentWeek);
+      }
+    });
+
+    return result;
+  }, [dates]);
+
+  const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  return (
+    <div>
+      {weeks.map((week, weekIndex) => (
+        <div
+          key={weekIndex}
+          style={{
+            marginBottom: 20,
+            border: "1px solid #eee",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, 1fr)",
+              background: "#fafafa",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            {week.map((date, dayIndex) => {
+              const d = new Date(date);
+              const dayOfWeek = d.getDay();
+              return (
+                <div
+                  key={date}
+                  style={{
+                    padding: 8,
+                    textAlign: "center",
+                    borderRight:
+                      dayIndex < week.length - 1 ? "1px solid #eee" : "none",
+                    fontWeight: 600,
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#999" }}>
+                    {weekDays[dayOfWeek]}
+                  </div>
+                  <div style={{ fontSize: 14 }}>
+                    {d.getMonth() + 1}/{d.getDate()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, 1fr)",
+              minHeight: 120,
+            }}
+          >
+            {week.map((date, dayIndex) => {
+              const dayAssignments = assignmentsByDate.get(date) || [];
+              return (
+                <div
+                  key={date}
+                  style={{
+                    padding: 8,
+                    borderRight:
+                      dayIndex < week.length - 1 ? "1px solid #eee" : "none",
+                    background: "white",
+                  }}
+                >
+                  {dayAssignments.map((a) => (
+                    <div
+                      key={a.id}
+                      style={{
+                        padding: 6,
+                        marginBottom: 6,
+                        background: "#f0f8ff",
+                        borderLeft: "3px solid #0366d6",
+                        borderRadius: 4,
+                        fontSize: 12,
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                        {a.service_types?.name || "未知"}
+                      </div>
+                      <div style={{ color: "#666" }}>
+                        {a.members?.name || "未分配"}
+                      </div>
+                      {isAdmin && (
+                        <div style={{ marginTop: 4, display: "flex", gap: 4 }}>
+                          <a
+                            href={`/services/${a.id}/edit`}
+                            style={{
+                              fontSize: 11,
+                              color: "#0366d6",
+                              textDecoration: "none",
+                            }}
+                          >
+                            编辑
+                          </a>
+                          <button
+                            onClick={() => onDelete(a.id)}
+                            style={{
+                              fontSize: 11,
+                              color: "#c00",
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// 列表视图组件
+function ListView({
+  assignments,
+  isAdmin,
+  onDelete,
+}: {
+  assignments: ServiceAssignment[];
+  isAdmin: boolean;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+        <thead>
+          <tr style={{ background: "#fafafa" }}>
+            <th
+              style={{
+                textAlign: "left",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              日期
+            </th>
+            <th
+              style={{
+                textAlign: "left",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              服务类型
+            </th>
+            <th
+              style={{
+                textAlign: "left",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              成员
+            </th>
+            <th
+              style={{
+                textAlign: "left",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              备注
+            </th>
+            <th
+              style={{
+                textAlign: "center",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              状态
+            </th>
+            {isAdmin && (
+              <th
+                style={{
+                  textAlign: "center",
+                  padding: 10,
+                  borderBottom: "1px solid #eee",
+                }}
+              >
+                操作
+              </th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {assignments.length === 0 ? (
+            <tr>
+              <td
+                colSpan={isAdmin ? 6 : 5}
+                style={{ padding: 20, textAlign: "center", color: "#999" }}
+              >
+                暂无服务安排
+              </td>
+            </tr>
+          ) : (
+            assignments.map((a) => (
+              <tr key={a.id}>
+                <td style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                  {a.service_date}
+                </td>
+                <td style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                  {a.service_types?.name || "未知"}
+                </td>
+                <td style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                  {a.members?.name || "未分配"}
+                </td>
+                <td style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                  {a.notes || "-"}
+                </td>
+                <td
+                  style={{
+                    padding: 10,
+                    borderBottom: "1px solid #eee",
+                    textAlign: "center",
+                  }}
+                >
+                  <span
+                    style={{
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background:
+                        a.status === "completed"
+                          ? "#e6f9e6"
+                          : a.status === "cancelled"
+                          ? "#f5f5f5"
+                          : "#fff3cd",
+                      color:
+                        a.status === "completed"
+                          ? "#1a7a1a"
+                          : a.status === "cancelled"
+                          ? "#666"
+                          : "#856404",
+                    }}
+                  >
+                    {a.status === "scheduled"
+                      ? "已安排"
+                      : a.status === "completed"
+                      ? "已完成"
+                      : "已取消"}
+                  </span>
+                </td>
+                {isAdmin && (
+                  <td
+                    style={{
+                      padding: 10,
+                      borderBottom: "1px solid #eee",
+                      textAlign: "center",
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", gap: 8, justifyContent: "center" }}
+                    >
+                      <a
+                        href={`/services/${a.id}/edit`}
+                        style={{
+                          padding: "4px 8px",
+                          border: "1px solid #0366d6",
+                          color: "#0366d6",
+                          background: "white",
+                          borderRadius: 4,
+                          textDecoration: "none",
+                          fontSize: 12,
+                        }}
+                      >
+                        编辑
+                      </a>
+                      <button
+                        onClick={() => onDelete(a.id)}
+                        style={{
+                          padding: "4px 8px",
+                          border: "1px solid #c00",
+                          color: "#c00",
+                          background: "white",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          fontSize: 12,
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
