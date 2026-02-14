@@ -23,7 +23,26 @@ export type InventoryItem = {
   updated_by: string | null;
 };
 
+export type InventoryCategory = {
+  id: string;
+  org_id: string;
+  name: string;
+  value: string;
+  is_active: boolean;
+  sort_order: number;
+};
+
+export type InventoryLocation = {
+  id: string;
+  org_id: string;
+  name: string;
+  value: string;
+  is_active: boolean;
+  sort_order: number;
+};
+
 // ─── 枚举选项 ───
+// 注意：这些常量保留用于向后兼容，但新代码应该从数据库读取
 export const CATEGORY_OPTIONS = [
   { value: "book", label: "书" },
   { value: "toy", label: "玩具" },
@@ -247,4 +266,112 @@ export async function fetchAllMembers(orgId: string): Promise<Map<string, string
   const map = new Map<string, string>();
   (data ?? []).forEach((m: any) => map.set(String(m.id), String(m.name)));
   return map;
+}
+
+// ─── 类别和位置管理 ───
+
+/** 获取类别列表 */
+export async function fetchInventoryCategories(orgId: string): Promise<InventoryCategory[]> {
+  const { data, error } = await supabase
+    .from("inventory_categories")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error("加载类别列表失败：" + error.message);
+  return (data ?? []) as InventoryCategory[];
+}
+
+/** 获取位置列表 */
+export async function fetchInventoryLocations(orgId: string): Promise<InventoryLocation[]> {
+  const { data, error } = await supabase
+    .from("inventory_locations")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error("加载位置列表失败：" + error.message);
+  return (data ?? []) as InventoryLocation[];
+}
+
+/** 创建类别 */
+export async function createInventoryCategory(
+  orgId: string,
+  name: string,
+  value: string,
+  sortOrder: number = 0
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("inventory_categories")
+    .insert({ org_id: orgId, name, value, sort_order: sortOrder })
+    .select("id")
+    .single();
+
+  if (error) throw new Error("创建类别失败：" + error.message);
+  return data.id;
+}
+
+/** 创建位置 */
+export async function createInventoryLocation(
+  orgId: string,
+  name: string,
+  value: string,
+  sortOrder: number = 0
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("inventory_locations")
+    .insert({ org_id: orgId, name, value, sort_order: sortOrder })
+    .select("id")
+    .single();
+
+  if (error) throw new Error("创建位置失败：" + error.message);
+  return data.id;
+}
+
+/** 更新类别 */
+export async function updateInventoryCategory(
+  id: string,
+  updates: Partial<Pick<InventoryCategory, "name" | "value" | "sort_order" | "is_active">>
+): Promise<void> {
+  const { error } = await supabase
+    .from("inventory_categories")
+    .update(updates)
+    .eq("id", id);
+
+  if (error) throw new Error("更新类别失败：" + error.message);
+}
+
+/** 更新位置 */
+export async function updateInventoryLocation(
+  id: string,
+  updates: Partial<Pick<InventoryLocation, "name" | "value" | "sort_order" | "is_active">>
+): Promise<void> {
+  const { error } = await supabase
+    .from("inventory_locations")
+    .update(updates)
+    .eq("id", id);
+
+  if (error) throw new Error("更新位置失败：" + error.message);
+}
+
+/** 删除类别 */
+export async function deleteInventoryCategory(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("inventory_categories")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw new Error("删除类别失败：" + error.message);
+}
+
+/** 删除位置 */
+export async function deleteInventoryLocation(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("inventory_locations")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw new Error("删除位置失败：" + error.message);
 }

@@ -115,6 +115,11 @@ export default function InventoryClient() {
               + 新增物资
             </a>
           )}
+          {isAdmin && (
+            <a href="/inventory/settings" style={{ padding: "8px 12px", fontWeight: 700, border: "1px solid #0366d6", color: "#0366d6", borderRadius: 6 }}>
+              ⚙️ 类别/位置设置
+            </a>
+          )}
           <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             ← 返回流水
           </a>
