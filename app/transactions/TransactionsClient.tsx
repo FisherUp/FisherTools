@@ -590,12 +590,12 @@ export default function TransactionsClient() {
     }
 
     // ⚠️ 这里的路径/文件名必须与你 public 目录一致
-    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.ttf");
+    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.otf");
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
-    doc.addFileToVFS("NotoSansCJKsc-Regular.ttf", fontBase64);
-    doc.addFont("NotoSansCJKsc-Regular.ttf", "NotoSansCJK", "normal");
+    doc.addFileToVFS("NotoSansCJKsc-Regular.otf", fontBase64);
+    doc.addFont("NotoSansCJKsc-Regular.otf", "NotoSansCJK", "normal");
     doc.setFont("NotoSansCJK", "normal");
 
     const now = new Date();
@@ -861,9 +861,11 @@ export default function TransactionsClient() {
             PDF导出
           </button>
 
-          <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
-            + 新增
-          </a>
+          {(userRole === "admin" || userRole === "finance") && (
+            <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
+              + 新增
+            </a>
+          )}
 
           {userRole === "admin" && (
             <a href="/members" style={{ padding: "8px 12px", fontWeight: 700 }}>
@@ -1155,35 +1157,43 @@ export default function TransactionsClient() {
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.updated_at)}</td>
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                      <a
-                        href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
-                        style={{
-                          marginRight: 10,
-                          color: "#0366d6",
-                          textDecoration: "none",
-                          border: "1px solid #0366d6",
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          display: "inline-block",
-                        }}
-                      >
-                        编辑
-                      </a>
+                      {(userRole === "admin" || userRole === "finance") && (
+                        <a
+                          href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
+                          style={{
+                            marginRight: 10,
+                            color: "#0366d6",
+                            textDecoration: "none",
+                            border: "1px solid #0366d6",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            display: "inline-block",
+                          }}
+                        >
+                          编辑
+                        </a>
+                      )}
 
-                      <button
-                        onClick={() => deleteRow(r.id)}
-                        disabled={loading}
-                        style={{
-                          color: "#c00",
-                          border: "1px solid #c00",
-                          background: "transparent",
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        删除
-                      </button>
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => deleteRow(r.id)}
+                          disabled={loading}
+                          style={{
+                            color: "#c00",
+                            border: "1px solid #c00",
+                            background: "transparent",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          删除
+                        </button>
+                      )}
+
+                      {userRole !== "admin" && userRole !== "finance" && (
+                        <span style={{ color: "#999", fontSize: 12 }}>仅查看</span>
+                      )}
                     </td>
                   </tr>
                 );

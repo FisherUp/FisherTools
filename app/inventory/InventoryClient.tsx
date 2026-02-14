@@ -3,14 +3,15 @@
 import { useEffect, useState, useMemo } from "react";
 import {
   InventoryItem,
+  InventoryCategory,
+  InventoryLocation,
   fetchInventoryItems,
   fetchAllMembers,
+  fetchInventoryCategories,
+  fetchInventoryLocations,
   batchGetSignedUrls,
   getMyProfile,
-  categoryLabel,
   statusLabel,
-  locationLabel,
-  CATEGORY_OPTIONS,
   STATUS_OPTIONS,
 } from "../../lib/services/inventoryService";
 
@@ -20,6 +21,8 @@ export default function InventoryClient() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [memberMap, setMemberMap] = useState<MemberMap>(new Map());
   const [imageUrlMap, setImageUrlMap] = useState<Map<string, string>>(new Map());
+  const [categoryOptions, setCategoryOptions] = useState<InventoryCategory[]>([]);
+  const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -42,13 +45,17 @@ export default function InventoryClient() {
         const profile = await getMyProfile();
         setRole(profile.role);
 
-        const [list, members] = await Promise.all([
+        const [list, members, cats, locs] = await Promise.all([
           fetchInventoryItems(profile.orgId),
           fetchAllMembers(profile.orgId),
+          fetchInventoryCategories(profile.orgId),
+          fetchInventoryLocations(profile.orgId),
         ]);
 
         setItems(list);
         setMemberMap(members);
+        setCategoryOptions(cats);
+        setLocationOptions(locs);
 
         // 批量生成缩略图 signed URL
         const paths = list.map((i) => i.image_path);
@@ -144,9 +151,9 @@ export default function InventoryClient() {
           style={{ padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6 }}
         >
           <option value="">全部类别</option>
-          {CATEGORY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
+          {categoryOptions.map((o) => (
+            <option key={o.id} value={o.value}>
+              {o.name}
             </option>
           ))}
         </select>
@@ -267,7 +274,7 @@ export default function InventoryClient() {
                         {item.name}
                       </td>
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                        {categoryLabel(item.category)}
+                        {item.category ? (categoryOptions.find((c) => c.value === item.category)?.name ?? item.category) : "-"}
                       </td>
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                         {ownerName}
@@ -276,7 +283,7 @@ export default function InventoryClient() {
                         {item.quantity}
                       </td>
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                        {locationLabel(item.location)}
+                        {item.location ? (locationOptions.find((l) => l.value === item.location)?.name ?? item.location) : "-"}
                       </td>
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                         <span

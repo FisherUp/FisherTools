@@ -7,9 +7,11 @@ import {
   uploadInventoryImage,
   updateInventoryItem,
   fetchMembers,
-  CATEGORY_OPTIONS,
+  fetchInventoryCategories,
+  fetchInventoryLocations,
+  InventoryCategory,
+  InventoryLocation,
   STATUS_OPTIONS,
-  LOCATION_OPTIONS,
   MAX_FILE_SIZE,
 } from "../../../lib/services/inventoryService";
 
@@ -17,6 +19,8 @@ type Member = { id: string; name: string };
 
 export default function NewInventoryClient() {
   const [members, setMembers] = useState<Member[]>([]);
+  const [categoryOptions, setCategoryOptions] = useState<InventoryCategory[]>([]);
+  const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
   const [orgId, setOrgId] = useState("");
   const [role, setRole] = useState("");
 
@@ -42,8 +46,14 @@ export default function NewInventoryClient() {
         setOrgId(profile.orgId);
         setRole(profile.role);
 
-        const memberList = await fetchMembers(profile.orgId);
+        const [memberList, cats, locs] = await Promise.all([
+          fetchMembers(profile.orgId),
+          fetchInventoryCategories(profile.orgId),
+          fetchInventoryLocations(profile.orgId),
+        ]);
         setMembers(memberList);
+        setCategoryOptions(cats);
+        setLocationOptions(locs);
         if (memberList.length > 0) setOwnerId(memberList[0].id);
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
@@ -154,8 +164,8 @@ export default function NewInventoryClient() {
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           >
             <option value="">（可选）</option>
-            {CATEGORY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {categoryOptions.map((o) => (
+              <option key={o.id} value={o.value}>{o.name}</option>
             ))}
           </select>
         </label>
@@ -193,8 +203,8 @@ export default function NewInventoryClient() {
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           >
             <option value="">（可选）</option>
-            {LOCATION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {locationOptions.map((o) => (
+              <option key={o.id} value={o.value}>{o.name}</option>
             ))}
           </select>
         </label>

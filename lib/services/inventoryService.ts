@@ -270,7 +270,7 @@ export async function fetchAllMembers(orgId: string): Promise<Map<string, string
 
 // ─── 类别和位置管理 ───
 
-/** 获取类别列表 */
+/** 获取类别列表（仅启用的，用于表单下拉） */
 export async function fetchInventoryCategories(orgId: string): Promise<InventoryCategory[]> {
   const { data, error } = await supabase
     .from("inventory_categories")
@@ -283,7 +283,19 @@ export async function fetchInventoryCategories(orgId: string): Promise<Inventory
   return (data ?? []) as InventoryCategory[];
 }
 
-/** 获取位置列表 */
+/** 获取所有类别（含停用的，用于设置页管理） */
+export async function fetchAllInventoryCategories(orgId: string): Promise<InventoryCategory[]> {
+  const { data, error } = await supabase
+    .from("inventory_categories")
+    .select("*")
+    .eq("org_id", orgId)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error("加载类别列表失败：" + error.message);
+  return (data ?? []) as InventoryCategory[];
+}
+
+/** 获取位置列表（仅启用的，用于表单下拉） */
 export async function fetchInventoryLocations(orgId: string): Promise<InventoryLocation[]> {
   const { data, error } = await supabase
     .from("inventory_locations")
@@ -296,16 +308,27 @@ export async function fetchInventoryLocations(orgId: string): Promise<InventoryL
   return (data ?? []) as InventoryLocation[];
 }
 
-/** 创建类别 */
+/** 获取所有位置（含停用���，用于设置页管理） */
+export async function fetchAllInventoryLocations(orgId: string): Promise<InventoryLocation[]> {
+  const { data, error } = await supabase
+    .from("inventory_locations")
+    .select("*")
+    .eq("org_id", orgId)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error("加载位置列表失败：" + error.message);
+  return (data ?? []) as InventoryLocation[];
+}
+
+/** 创建类别（value 自动使用 name） */
 export async function createInventoryCategory(
   orgId: string,
   name: string,
-  value: string,
   sortOrder: number = 0
 ): Promise<string> {
   const { data, error } = await supabase
     .from("inventory_categories")
-    .insert({ org_id: orgId, name, value, sort_order: sortOrder })
+    .insert({ org_id: orgId, name, value: name, sort_order: sortOrder })
     .select("id")
     .single();
 
@@ -313,16 +336,15 @@ export async function createInventoryCategory(
   return data.id;
 }
 
-/** 创建位置 */
+/** 创建位置（value 自动使用 name） */
 export async function createInventoryLocation(
   orgId: string,
   name: string,
-  value: string,
   sortOrder: number = 0
 ): Promise<string> {
   const { data, error } = await supabase
     .from("inventory_locations")
-    .insert({ org_id: orgId, name, value, sort_order: sortOrder })
+    .insert({ org_id: orgId, name, value: name, sort_order: sortOrder })
     .select("id")
     .single();
 

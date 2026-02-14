@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   getMyProfile,
-  fetchInventoryCategories,
-  fetchInventoryLocations,
+  fetchAllInventoryCategories,
+  fetchAllInventoryLocations,
   createInventoryCategory,
   createInventoryLocation,
   updateInventoryCategory,
@@ -26,9 +26,7 @@ export default function InventorySettingsClient() {
 
   // 新增表单
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryValue, setNewCategoryValue] = useState("");
   const [newLocationName, setNewLocationName] = useState("");
-  const [newLocationValue, setNewLocationValue] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -48,8 +46,8 @@ export default function InventorySettingsClient() {
       setRole(profile.role);
 
       const [categoriesData, locationsData] = await Promise.all([
-        fetchInventoryCategories(profile.orgId),
-        fetchInventoryLocations(profile.orgId),
+        fetchAllInventoryCategories(profile.orgId),
+        fetchAllInventoryLocations(profile.orgId),
       ]);
 
       setCategories(categoriesData);
@@ -62,17 +60,16 @@ export default function InventorySettingsClient() {
   }
 
   async function handleAddCategory() {
-    if (!newCategoryName.trim() || !newCategoryValue.trim()) {
-      setError("请填写类别名称和值");
+    if (!newCategoryName.trim()) {
+      setError("请填写类别名称");
       return;
     }
 
     try {
       setSubmitting(true);
       setError("");
-      await createInventoryCategory(orgId, newCategoryName.trim(), newCategoryValue.trim());
+      await createInventoryCategory(orgId, newCategoryName.trim());
       setNewCategoryName("");
-      setNewCategoryValue("");
       await loadData();
     } catch (err: any) {
       setError(err.message || "添加类别失败");
@@ -82,17 +79,16 @@ export default function InventorySettingsClient() {
   }
 
   async function handleAddLocation() {
-    if (!newLocationName.trim() || !newLocationValue.trim()) {
-      setError("请填写位置名称和值");
+    if (!newLocationName.trim()) {
+      setError("请填写位置名称");
       return;
     }
 
     try {
       setSubmitting(true);
       setError("");
-      await createInventoryLocation(orgId, newLocationName.trim(), newLocationValue.trim());
+      await createInventoryLocation(orgId, newLocationName.trim());
       setNewLocationName("");
-      setNewLocationValue("");
       await loadData();
     } catch (err: any) {
       setError(err.message || "添加位置失败");
@@ -224,32 +220,15 @@ export default function InventorySettingsClient() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ flex: "1 1 200px" }}>
+          <div style={{ flex: "1 1 300px" }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
-              类别名称（如：书）
+              类别名称（如：书、玩具、家具）
             </label>
             <input
               type="text"
               value={newCategoryName}
               onChange={(e) => setNewCategoryName(e.target.value)}
-              placeholder="书"
-              style={{
-                width: "100%",
-                padding: 8,
-                border: "1px solid #ddd",
-                borderRadius: 4,
-              }}
-            />
-          </div>
-          <div style={{ flex: "1 1 200px" }}>
-            <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
-              类别值（如：book）
-            </label>
-            <input
-              type="text"
-              value={newCategoryValue}
-              onChange={(e) => setNewCategoryValue(e.target.value)}
-              placeholder="book"
+              placeholder="输入类别名称"
               style={{
                 width: "100%",
                 padding: 8,
@@ -283,9 +262,6 @@ export default function InventorySettingsClient() {
                 <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
                   名称
                 </th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
-                  值
-                </th>
                 <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee" }}>
                   状态
                 </th>
@@ -297,7 +273,7 @@ export default function InventorySettingsClient() {
             <tbody>
               {categories.length === 0 ? (
                 <tr>
-                  <td colSpan={4} style={{ padding: 20, textAlign: "center", color: "#666" }}>
+                  <td colSpan={3} style={{ padding: 20, textAlign: "center", color: "#666" }}>
                     暂无类别
                   </td>
                 </tr>
@@ -306,9 +282,6 @@ export default function InventorySettingsClient() {
                   <tr key={cat.id}>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                       {cat.name}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontFamily: "monospace" }}>
-                      {cat.value}
                     </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "center" }}>
                       <span
@@ -381,32 +354,15 @@ export default function InventorySettingsClient() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ flex: "1 1 200px" }}>
+          <div style={{ flex: "1 1 300px" }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
-              位置名称（如：客厅）
+              位置名称（如：客厅、卧室、储物间）
             </label>
             <input
               type="text"
               value={newLocationName}
               onChange={(e) => setNewLocationName(e.target.value)}
-              placeholder="客厅"
-              style={{
-                width: "100%",
-                padding: 8,
-                border: "1px solid #ddd",
-                borderRadius: 4,
-              }}
-            />
-          </div>
-          <div style={{ flex: "1 1 200px" }}>
-            <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
-              位置值（如：living_room）
-            </label>
-            <input
-              type="text"
-              value={newLocationValue}
-              onChange={(e) => setNewLocationValue(e.target.value)}
-              placeholder="living_room"
+              placeholder="输入位置名称"
               style={{
                 width: "100%",
                 padding: 8,
@@ -440,9 +396,6 @@ export default function InventorySettingsClient() {
                 <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
                   名称
                 </th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
-                  值
-                </th>
                 <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee" }}>
                   状态
                 </th>
@@ -454,7 +407,7 @@ export default function InventorySettingsClient() {
             <tbody>
               {locations.length === 0 ? (
                 <tr>
-                  <td colSpan={4} style={{ padding: 20, textAlign: "center", color: "#666" }}>
+                  <td colSpan={3} style={{ padding: 20, textAlign: "center", color: "#666" }}>
                     暂无位置
                   </td>
                 </tr>
@@ -463,9 +416,6 @@ export default function InventorySettingsClient() {
                   <tr key={loc.id}>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                       {loc.name}
-                    </td>
-                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontFamily: "monospace" }}>
-                      {loc.value}
                     </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "center" }}>
                       <span
