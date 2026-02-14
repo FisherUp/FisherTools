@@ -770,6 +770,13 @@ export default function TransactionsClient() {
                   color: userRole === "admin" ? "#c00" : "#0366d6",
                   fontWeight: 800,
                 }}
+                title={
+                  userRole === "admin"
+                    ? "管理员：可管理所有数据和设置"
+                    : userRole === "finance"
+                    ? "财务：可查看和编辑财务数据"
+                    : "普通用户：仅可查看数据"
+                }
               >
                 {userRole}
               </span>
@@ -854,9 +861,11 @@ export default function TransactionsClient() {
             PDF导出
           </button>
 
-          <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
-            + 新增
-          </a>
+          {(userRole === "admin" || userRole === "finance") && (
+            <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
+              + 新增
+            </a>
+          )}
 
           {userRole === "admin" && (
             <a href="/members" style={{ padding: "8px 12px", fontWeight: 700 }}>
@@ -882,8 +891,30 @@ export default function TransactionsClient() {
             </a>
           )}
 
+          {userRole !== "admin" && (
+            <span
+              style={{
+                padding: "8px 12px",
+                color: "#999",
+                fontSize: 12,
+                cursor: "help",
+              }}
+              title="管理功能仅限管理员使用。如需管理经手人、账户、类别或预算，请联系管理员。"
+            >
+              ℹ️ 管理功能需要管理员权限
+            </span>
+          )}
+
           <a href="/inventory" style={{ padding: "8px 12px", fontWeight: 700 }}>
             物资管理
+          </a>
+
+          <a href="/services" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            服务排班
+          </a>
+
+          <a href="/leaves" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            休假管理
           </a>
 
           <button
@@ -994,7 +1025,7 @@ export default function TransactionsClient() {
                     </tr>
                   ) : (
                     budgetSummary.map((b) => {
-                      const over = b.remainingAmount !== null && b.remainingAmount <= 0;
+                      const over = b.remainingAmount !== null && b.remainingAmount < 0;
                       const remainText = b.remainingAmount === null ? "-" : formatYuanFromFen(b.remainingAmount);
 
                       // 使用比例
@@ -1069,19 +1100,19 @@ export default function TransactionsClient() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>日期</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>收/支</th>
-              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee" }}>金额（元）</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>类别</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>账户</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人1</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>经手人2</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>备注</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建人</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>创建时间</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>最后修改人</th>
-              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>最后修改时间</th>
-              <th style={{ padding: 10, borderBottom: "1px solid #eee" }}>操作</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>日期</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "60px" }}>收/支</th>
+              <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>金额（元）</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>类别</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "120px" }}>账户</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>经手人1</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>经手人2</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", minWidth: "150px" }}>备注</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>创建人</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "140px" }}>创建时间</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>最后修改人</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "140px" }}>最后修改时间</th>
+              <th style={{ padding: 10, borderBottom: "1px solid #eee", width: "80px" }}>操作</th>
             </tr>
           </thead>
 
@@ -1130,35 +1161,43 @@ export default function TransactionsClient() {
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{fmtDateTimeMaybe(r.updated_at)}</td>
 
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", whiteSpace: "nowrap" }}>
-                      <a
-                        href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
-                        style={{
-                          marginRight: 10,
-                          color: "#0366d6",
-                          textDecoration: "none",
-                          border: "1px solid #0366d6",
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          display: "inline-block",
-                        }}
-                      >
-                        编辑
-                      </a>
+                      {(userRole === "admin" || userRole === "finance") && (
+                        <a
+                          href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
+                          style={{
+                            marginRight: 10,
+                            color: "#0366d6",
+                            textDecoration: "none",
+                            border: "1px solid #0366d6",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            display: "inline-block",
+                          }}
+                        >
+                          编辑
+                        </a>
+                      )}
 
-                      <button
-                        onClick={() => deleteRow(r.id)}
-                        disabled={loading}
-                        style={{
-                          color: "#c00",
-                          border: "1px solid #c00",
-                          background: "transparent",
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                        }}
-                      >
-                        删除
-                      </button>
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => deleteRow(r.id)}
+                          disabled={loading}
+                          style={{
+                            color: "#c00",
+                            border: "1px solid #c00",
+                            background: "transparent",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                          }}
+                        >
+                          删除
+                        </button>
+                      )}
+
+                      {userRole !== "admin" && userRole !== "finance" && (
+                        <span style={{ color: "#999", fontSize: 12 }}>仅查看</span>
+                      )}
                     </td>
                   </tr>
                 );

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   InventoryItem,
+  InventoryCategory,
+  InventoryLocation,
   getMyProfile,
   fetchInventoryItem,
   updateInventoryItem,
@@ -12,12 +14,9 @@ import {
   getSignedUrl,
   fetchMembers,
   fetchAllMembers,
-  categoryLabel,
-  statusLabel,
-  locationLabel,
-  CATEGORY_OPTIONS,
+  fetchInventoryCategories,
+  fetchInventoryLocations,
   STATUS_OPTIONS,
-  LOCATION_OPTIONS,
   MAX_FILE_SIZE,
 } from "../../../../lib/services/inventoryService";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
@@ -30,6 +29,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [allMemberMap, setAllMemberMap] = useState<Map<string, string>>(new Map());
   const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
+  const [categoryOptions, setCategoryOptions] = useState<InventoryCategory[]>([]);
+  const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
 
   // 表单字段
   const [name, setName] = useState("");
@@ -89,14 +90,18 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setOrgId(profile.orgId);
         setRole(profile.role);
 
-        const [item, memberList, memberMap] = await Promise.all([
+        const [item, memberList, memberMap, cats, locs] = await Promise.all([
           fetchInventoryItem(id),
           fetchMembers(profile.orgId),
           fetchAllMembers(profile.orgId),
+          fetchInventoryCategories(profile.orgId),
+          fetchInventoryLocations(profile.orgId),
         ]);
 
         setMembers(memberList);
         setAllMemberMap(memberMap);
+        setCategoryOptions(cats);
+        setLocationOptions(locs);
 
         // 如果当前 owner_id 不在活跃成员中，也加进下拉
         if (item.owner_id && !memberList.some((m) => m.id === item.owner_id)) {
@@ -302,8 +307,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           >
             <option value="">（可选）</option>
-            {CATEGORY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {categoryOptions.map((o) => (
+              <option key={o.id} value={o.value}>{o.name}</option>
             ))}
           </select>
         </label>
@@ -340,8 +345,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           >
             <option value="">（可选）</option>
-            {LOCATION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {locationOptions.map((o) => (
+              <option key={o.id} value={o.value}>{o.name}</option>
             ))}
           </select>
         </label>
