@@ -48,20 +48,22 @@ async function getMyProfile() {
   };
 }
 
-// 生成日期范围内的所有周日（或指定星期几）
-function generateDates(
-  startDate: string,
-  endDate: string,
-  dayOfWeek: number = 0
-): string[] {
+// 生成指定月份范围的所有日期
+function generateMonthDates(startMonth: Date, monthCount: number): string[] {
   const result: string[] = [];
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  const current = new Date(startMonth);
 
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    if (d.getDay() === dayOfWeek) {
-      result.push(d.toISOString().split("T")[0]);
+  for (let i = 0; i < monthCount; i++) {
+    const year = current.getFullYear();
+    const month = current.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day);
+      result.push(date.toISOString().split("T")[0]);
     }
+
+    current.setMonth(current.getMonth() + 1);
   }
 
   return result;
@@ -79,18 +81,9 @@ export default function BatchAssignmentClient() {
 
   // 表单字段
   const [serviceTypeId, setServiceTypeId] = useState("");
-  const [startDate, setStartDate] = useState(() => {
-    const today = new Date();
-    return today.toISOString().split("T")[0];
-  });
-  const [endDate, setEndDate] = useState(() => {
-    const today = new Date();
-    today.setDate(today.getDate() + 28); // 4周后
-    return today.toISOString().split("T")[0];
-  });
-  const [dayOfWeek, setDayOfWeek] = useState(0); // 0 = 周日
+  const [monthCount, setMonthCount] = useState(3); // 3个月或6个月
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -120,6 +113,16 @@ export default function BatchAssignmentClient() {
     }
   }
 
+  function toggleDate(date: string) {
+    const newDates = new Set(selectedDates);
+    if (newDates.has(date)) {
+      newDates.delete(date);
+    } else {
+      newDates.add(date);
+    }
+    setSelectedDates(newDates);
+  }
+
   function toggleMember(memberId: string) {
     if (selectedMemberIds.includes(memberId)) {
       setSelectedMemberIds(selectedMemberIds.filter((id) => id !== memberId));
@@ -128,14 +131,37 @@ export default function BatchAssignmentClient() {
     }
   }
 
+  // 生成日历数据
+  const calendarDates = useMemo(() => {
+    const today = new Date();
+    today.setDate(1); // 设置为本月1号
+    return generateMonthDates(today, monthCount);
+  }, [monthCount]);
+
+  // 按月份分组日期
+  const datesByMonth = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    calendarDates.forEach((date) => {
+      const d = new Date(date);
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (!groups.has(monthKey)) {
+        groups.set(monthKey, []);
+      }
+      groups.get(monthKey)!.push(date);
+    });
+    return groups;
+  }, [calendarDates]);
+
   // 生成预览
   const previewAssignments = useMemo((): PreviewAssignment[] => {
-    if (!serviceTypeId || selectedMemberIds.length === 0) return [];
+    if (!serviceTypeId || selectedMemberIds.length === 0 || selectedDates.size === 0) {
+      return [];
+    }
 
-    const dates = generateDates(startDate, endDate, dayOfWeek);
+    const dates = Array.from(selectedDates).sort();
     const result: PreviewAssignment[] = [];
 
-    // 轮换算法：循环分配成员
+    // 轮换算法：循环分配成员到选中的日期
     dates.forEach((date, index) => {
       const memberIndex = index % selectedMemberIds.length;
       const memberId = selectedMemberIds[memberIndex];
@@ -149,7 +175,7 @@ export default function BatchAssignmentClient() {
     });
 
     return result;
-  }, [serviceTypeId, startDate, endDate, dayOfWeek, selectedMemberIds, members]);
+  }, [serviceTypeId, selectedDates, selectedMemberIds, members]);
 
   async function handleSubmit() {
     setError("");
@@ -161,8 +187,8 @@ export default function BatchAssignmentClient() {
       return;
     }
 
-    if (previewAssignments.length === 0) {
-      setError("没有生成任何排班记录，请检查日期范围和星期设置");
+    if (selectedDates.size === 0) {
+      setError("请至少选择一个日期");
       setSubmitting(false);
       return;
     }
@@ -189,7 +215,7 @@ export default function BatchAssignmentClient() {
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 1000, margin: "0 auto" }}>
+    <div style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
       <div
         style={{
           display: "flex",
@@ -263,47 +289,11 @@ export default function BatchAssignmentClient() {
               </select>
             </label>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label>
-                开始日期：
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    padding: 8,
-                    marginTop: 6,
-                    border: "1px solid #ddd",
-                    borderRadius: 4,
-                  }}
-                />
-              </label>
-
-              <label>
-                结束日期：
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    padding: 8,
-                    marginTop: 6,
-                    border: "1px solid #ddd",
-                    borderRadius: 4,
-                  }}
-                />
-              </label>
-            </div>
-
             <label>
-              星期几：
+              显示月份数：
               <select
-                value={dayOfWeek}
-                onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                value={monthCount}
+                onChange={(e) => setMonthCount(Number(e.target.value))}
                 style={{
                   display: "block",
                   width: "100%",
@@ -313,15 +303,123 @@ export default function BatchAssignmentClient() {
                   borderRadius: 4,
                 }}
               >
-                <option value={0}>周日</option>
-                <option value={1}>周一</option>
-                <option value={2}>周二</option>
-                <option value={3}>周三</option>
-                <option value={4}>周四</option>
-                <option value={5}>周五</option>
-                <option value={6}>周六</option>
+                <option value={3}>3个月</option>
+                <option value={6}>6个月</option>
               </select>
             </label>
+          </div>
+        </div>
+
+        {/* 日历视图 */}
+        <div
+          style={{
+            background: "#f5f5f5",
+            padding: 20,
+            borderRadius: 8,
+          }}
+        >
+          <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>
+            选择日期（已选 {selectedDates.size} 天）
+          </h2>
+
+          <div style={{ display: "grid", gap: 20 }}>
+            {Array.from(datesByMonth.entries()).map(([monthKey, dates]) => {
+              const firstDate = new Date(dates[0]);
+              const monthName = firstDate.toLocaleDateString("zh-CN", {
+                year: "numeric",
+                month: "long",
+              });
+
+              // 计算该月第一天是星期几
+              const firstDayOfMonth = new Date(
+                firstDate.getFullYear(),
+                firstDate.getMonth(),
+                1
+              );
+              const startDayOfWeek = firstDayOfMonth.getDay();
+
+              // 创建日历网格（包含空白单元格）
+              const calendarGrid: (string | null)[] = [];
+              for (let i = 0; i < startDayOfWeek; i++) {
+                calendarGrid.push(null);
+              }
+              dates.forEach((date) => calendarGrid.push(date));
+
+              return (
+                <div key={monthKey}>
+                  <h3
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 600,
+                      marginBottom: 10,
+                    }}
+                  >
+                    {monthName}
+                  </h3>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(7, 1fr)",
+                      gap: 8,
+                    }}
+                  >
+                    {/* 星期标题 */}
+                    {["日", "一", "二", "三", "四", "五", "六"].map((day) => (
+                      <div
+                        key={day}
+                        style={{
+                          textAlign: "center",
+                          fontWeight: 600,
+                          padding: 8,
+                          color: "#666",
+                        }}
+                      >
+                        {day}
+                      </div>
+                    ))}
+
+                    {/* 日期单元格 */}
+                    {calendarGrid.map((date, index) => {
+                      if (!date) {
+                        return <div key={`empty-${index}`} />;
+                      }
+
+                      const d = new Date(date);
+                      const dayNum = d.getDate();
+                      const isSelected = selectedDates.has(date);
+                      const isToday =
+                        date === new Date().toISOString().split("T")[0];
+
+                      return (
+                        <button
+                          key={date}
+                          onClick={() => toggleDate(date)}
+                          style={{
+                            padding: 8,
+                            border: isSelected
+                              ? "2px solid #0366d6"
+                              : "1px solid #ddd",
+                            borderRadius: 4,
+                            background: isSelected
+                              ? "#e6f2ff"
+                              : isToday
+                              ? "#fff9e6"
+                              : "white",
+                            cursor: "pointer",
+                            textAlign: "center",
+                            fontWeight: isSelected ? 700 : 400,
+                            color: isSelected ? "#0366d6" : "#333",
+                          }}
+                        >
+                          {dayNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -372,29 +470,8 @@ export default function BatchAssignmentClient() {
           </div>
         </div>
 
-        {/* 预览按钮 */}
-        <div style={{ display: "flex", gap: 10 }}>
-          <button
-            onClick={() => setShowPreview(true)}
-            disabled={selectedMemberIds.length === 0}
-            style={{
-              padding: "10px 20px",
-              background:
-                selectedMemberIds.length === 0 ? "#ccc" : "#0366d6",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              fontWeight: 700,
-              cursor:
-                selectedMemberIds.length === 0 ? "not-allowed" : "pointer",
-            }}
-          >
-            生成预览
-          </button>
-        </div>
-
-        {/* 预览结果 */}
-        {showPreview && previewAssignments.length > 0 && (
+        {/* 预览和提交 */}
+        {previewAssignments.length > 0 && (
           <div
             style={{
               background: "#f5f5f5",
@@ -412,13 +489,15 @@ export default function BatchAssignmentClient() {
                 border: "1px solid #eee",
                 borderRadius: 8,
                 background: "white",
+                maxHeight: 400,
+                overflowY: "auto",
               }}
             >
               <table
                 style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}
               >
-                <thead>
-                  <tr style={{ background: "#fafafa" }}>
+                <thead style={{ position: "sticky", top: 0, background: "#fafafa" }}>
+                  <tr>
                     <th
                       style={{
                         textAlign: "left",
@@ -482,19 +561,6 @@ export default function BatchAssignmentClient() {
               >
                 {submitting ? "创建中..." : "确认创建"}
               </button>
-              <button
-                onClick={() => setShowPreview(false)}
-                disabled={submitting}
-                style={{
-                  padding: "10px 20px",
-                  background: "#f5f5f5",
-                  border: "1px solid #ddd",
-                  borderRadius: 4,
-                  cursor: submitting ? "not-allowed" : "pointer",
-                }}
-              >
-                重新配置
-              </button>
             </div>
           </div>
         )}
@@ -502,3 +568,4 @@ export default function BatchAssignmentClient() {
     </div>
   );
 }
+

@@ -183,7 +183,22 @@ export default function ServicesClient() {
           marginBottom: 20,
         }}
       >
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>服务排班</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <a
+            href="/transactions"
+            style={{
+              padding: "6px 10px",
+              border: "1px solid #ccc",
+              color: "#666",
+              borderRadius: 4,
+              textDecoration: "none",
+              fontSize: 14,
+            }}
+          >
+            ← 返回主界面
+          </a>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>服务排班</h1>
+        </div>
         <div style={{ display: "flex", gap: 10 }}>
           {isAdmin && (
             <>
