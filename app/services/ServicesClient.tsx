@@ -13,6 +13,7 @@ import { fetchMembers } from "@/lib/services/inventoryService";
 interface ServiceAssignment {
   id: string;
   service_date: string;
+  sermon_title: string | null;
   notes: string | null;
   status: string;
   service_types: {
@@ -532,7 +533,7 @@ function CalendarView({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
+              gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr",
               background: "#fafafa",
               borderBottom: "1px solid #eee",
             }}
@@ -564,7 +565,7 @@ function CalendarView({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
+              gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr",
               minHeight: 120,
             }}
           >
@@ -590,38 +591,62 @@ function CalendarView({
                         borderLeft: "3px solid #0366d6",
                         borderRadius: 4,
                         fontSize: 12,
+                        position: "relative",
                       }}
                     >
                       <div style={{ fontWeight: 600, marginBottom: 2 }}>
                         {a.service_types?.name || "未知"}
                       </div>
+                      {a.sermon_title && a.service_types?.name === "分享信息" && (
+                        <div
+                          style={{
+                            color: "#0366d6",
+                            marginBottom: 2,
+                            fontSize: 11,
+                            fontStyle: "italic",
+                          }}
+                        >
+                          {a.sermon_title}
+                        </div>
+                      )}
                       <div style={{ color: "#666" }}>
                         {a.members?.name || "未分配"}
                       </div>
                       {isAdmin && (
-                        <div style={{ marginTop: 4, display: "flex", gap: 4 }}>
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: 4,
+                            right: 4,
+                            display: "flex",
+                            gap: 4,
+                          }}
+                        >
                           <a
                             href={`/services/${a.id}/edit`}
                             style={{
-                              fontSize: 11,
+                              fontSize: 14,
                               color: "#0366d6",
                               textDecoration: "none",
+                              cursor: "pointer",
                             }}
+                            title="编辑"
                           >
-                            编辑
+                            ✏️
                           </a>
                           <button
                             onClick={() => onDelete(a.id)}
                             style={{
-                              fontSize: 11,
+                              fontSize: 14,
                               color: "#c00",
                               background: "none",
                               border: "none",
                               cursor: "pointer",
                               padding: 0,
                             }}
+                            title="删除"
                           >
-                            删除
+                            🗑️
                           </button>
                         </div>
                       )}

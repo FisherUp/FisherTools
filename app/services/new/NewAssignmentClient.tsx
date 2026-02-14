@@ -59,6 +59,7 @@ export default function NewAssignmentClient() {
     const today = new Date();
     return today.toISOString().split("T")[0];
   });
+  const [sermonTitle, setSermonTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState("scheduled");
 
@@ -109,6 +110,7 @@ export default function NewAssignmentClient() {
         serviceTypeId,
         memberId,
         serviceDate,
+        sermonTitle.trim() || undefined,
         notes.trim() || undefined,
         status
       );
@@ -238,6 +240,27 @@ export default function NewAssignmentClient() {
             required
           />
         </label>
+
+        {serviceTypes.find((t) => t.id === serviceTypeId)?.name ===
+          "分享信息" && (
+          <label>
+            信息题目：
+            <input
+              type="text"
+              value={sermonTitle}
+              onChange={(e) => setSermonTitle(e.target.value)}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: 8,
+                marginTop: 6,
+                border: "1px solid #ddd",
+                borderRadius: 4,
+              }}
+              placeholder="请输入信息题目"
+            />
+          </label>
+        )}
 
         <label>
           状态：

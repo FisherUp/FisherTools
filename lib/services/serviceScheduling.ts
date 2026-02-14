@@ -116,6 +116,7 @@ export async function fetchServiceAssignments(
       `
       id,
       service_date,
+      sermon_title,
       notes,
       status,
       service_types (id, name, frequency),
@@ -139,6 +140,7 @@ export async function createServiceAssignment(
   serviceTypeId: string,
   memberId: string,
   serviceDate: string,
+  sermonTitle?: string,
   notes?: string,
   status: string = "scheduled"
 ) {
@@ -149,6 +151,7 @@ export async function createServiceAssignment(
       service_type_id: serviceTypeId,
       member_id: memberId,
       service_date: serviceDate,
+      sermon_title: sermonTitle,
       notes,
       status,
     })
@@ -168,6 +171,7 @@ export async function createBatchServiceAssignments(
     service_type_id: string;
     member_id: string;
     service_date: string;
+    sermon_title?: string;
     notes?: string;
     status?: string;
   }>
@@ -189,6 +193,7 @@ export async function updateServiceAssignment(
   serviceTypeId?: string,
   memberId?: string,
   serviceDate?: string,
+  sermonTitle?: string,
   notes?: string,
   status?: string
 ) {
@@ -196,6 +201,7 @@ export async function updateServiceAssignment(
   if (serviceTypeId !== undefined) updates.service_type_id = serviceTypeId;
   if (memberId !== undefined) updates.member_id = memberId;
   if (serviceDate !== undefined) updates.service_date = serviceDate;
+  if (sermonTitle !== undefined) updates.sermon_title = sermonTitle;
   if (notes !== undefined) updates.notes = notes;
   if (status !== undefined) updates.status = status;
 
