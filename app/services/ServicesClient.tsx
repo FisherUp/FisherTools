@@ -9,6 +9,7 @@ import {
   deleteServiceAssignment,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
+import { getCalendarNotePreview } from "@/lib/utils/notes";
 
 interface ServiceAssignment {
   id: string;
@@ -593,77 +594,134 @@ function CalendarView({
                     background: "white",
                   }}
                 >
-                  {dayAssignments.map((a) => (
-                    <div
-                      key={a.id}
-                      style={{
-                        padding: 6,
-                        marginBottom: 6,
-                        background: "#f0f8ff",
-                        borderLeft: "3px solid #0366d6",
-                        borderRadius: 4,
-                        fontSize: 12,
-                        position: "relative",
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                        {a.service_types?.name || "未知"}
-                      </div>
-                      {a.sermon_title && a.service_types?.name === "分享信息" && (
+                  {(() => {
+                    // 按服务类型分组，同类型多人合并为一张卡片
+                    const grouped = new Map<string, ServiceAssignment[]>();
+                    dayAssignments.forEach((a) => {
+                      const key = a.service_types?.id || "unknown";
+                      if (!grouped.has(key)) grouped.set(key, []);
+                      grouped.get(key)!.push(a);
+                    });
+                    return Array.from(grouped.values()).map((group) => {
+                      const first = group[0];
+                      const notePreview = getCalendarNotePreview(first.notes);
+                      const visibleMembers = group.slice(0, 5);
+                      const hiddenCount = group.length - 5;
+                      return (
                         <div
+                          key={first.service_types?.id || first.id}
                           style={{
-                            color: "#0366d6",
-                            marginBottom: 2,
-                            fontSize: 11,
-                            fontStyle: "italic",
+                            padding: 6,
+                            marginBottom: 6,
+                            background: "#f0f8ff",
+                            borderLeft: "3px solid #0366d6",
+                            borderRadius: 4,
+                            fontSize: 12,
                           }}
                         >
-                          {a.sermon_title}
+                          {/* 服务类型名 */}
+                          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                            {first.service_types?.name || "未知"}
+                          </div>
+                          {/* 讲道题目 */}
+                          {first.sermon_title &&
+                            first.service_types?.name === "分享信息" && (
+                              <div
+                                style={{
+                                  color: "#0366d6",
+                                  marginBottom: 2,
+                                  fontSize: 11,
+                                  fontStyle: "italic",
+                                }}
+                              >
+                                {first.sermon_title}
+                              </div>
+                            )}
+                          {/* 每位成员一行，admin 显示操作图标 */}
+                          {visibleMembers.map((a) => (
+                            <div
+                              key={a.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                marginTop: 2,
+                              }}
+                            >
+                              <span style={{ color: "#555" }}>
+                                {a.members?.name || "未分配"}
+                              </span>
+                              {isAdmin && (
+                                <span
+                                  style={{
+                                    display: "flex",
+                                    gap: 2,
+                                    flexShrink: 0,
+                                    marginLeft: 4,
+                                  }}
+                                >
+                                  <a
+                                    href={`/services/${a.id}/edit`}
+                                    style={{
+                                      fontSize: 12,
+                                      color: "#0366d6",
+                                      textDecoration: "none",
+                                      cursor: "pointer",
+                                    }}
+                                    title="编辑"
+                                  >
+                                    ✏️
+                                  </a>
+                                  <button
+                                    onClick={() => onDelete(a.id)}
+                                    style={{
+                                      fontSize: 12,
+                                      color: "#c00",
+                                      background: "none",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      padding: 0,
+                                    }}
+                                    title="删除"
+                                  >
+                                    🗑️
+                                  </button>
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                          {/* 超过 5 人时提示 */}
+                          {hiddenCount > 0 && (
+                            <div
+                              style={{
+                                color: "#999",
+                                fontSize: 10,
+                                marginTop: 2,
+                              }}
+                            >
+                              等 {hiddenCount} 人…
+                            </div>
+                          )}
+                          {/* 备注预览 */}
+                          {notePreview && (
+                            <div
+                              style={{
+                                color: "#888",
+                                fontSize: 10,
+                                marginTop: 3,
+                                overflow: "hidden",
+                                whiteSpace: "nowrap",
+                                textOverflow: "ellipsis",
+                              }}
+                              title={notePreview}
+                            >
+                              {notePreview}
+                            </div>
+                          )}
                         </div>
-                      )}
-                      <div style={{ color: "#666" }}>
-                        {a.members?.name || "未分配"}
-                      </div>
-                      {isAdmin && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: 4,
-                            right: 4,
-                            display: "flex",
-                            gap: 4,
-                          }}
-                        >
-                          <a
-                            href={`/services/${a.id}/edit`}
-                            style={{
-                              fontSize: 14,
-                              color: "#0366d6",
-                              textDecoration: "none",
-                              cursor: "pointer",
-                            }}
-                            title="编辑"
-                          >
-                            ✏️
-                          </a>
-                          <button
-                            onClick={() => onDelete(a.id)}
-                            style={{
-                              fontSize: 14,
-                              color: "#c00",
-                              background: "none",
-                              border: "none",
-                              cursor: "pointer",
-                              padding: 0,
-                            }}
-                            title="删除"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    });
+                  })()}
                 </div>
               );
             })}

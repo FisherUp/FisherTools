@@ -6,9 +6,13 @@ import { supabase } from "@/lib/supabaseClient";
 import {
   fetchServiceTypes,
   fetchServiceAssignment,
+  fetchSlotAssignments,
   updateServiceAssignment,
+  createBatchServiceAssignments,
+  deleteServiceAssignment,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
+import { getVisibleNoteLength } from "@/lib/utils/notes";
 
 interface ServiceType {
   id: string;
@@ -57,11 +61,16 @@ export default function EditAssignmentClient() {
 
   // 表单字段
   const [serviceTypeId, setServiceTypeId] = useState("");
-  const [memberId, setMemberId] = useState("");
   const [serviceDate, setServiceDate] = useState("");
   const [sermonTitle, setSermonTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState("scheduled");
+
+  // 多成员相关：当前槽位已有的 memberId → assignmentId 映射
+  const [slotMemberMap, setSlotMemberMap] = useState<Map<string, string>>(new Map());
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  // 当前点击编辑的成员（仅用于标注「当前」）
+  const [primaryMemberId, setPrimaryMemberId] = useState("");
 
   useEffect(() => {
     loadData();
@@ -86,15 +95,40 @@ export default function EditAssignmentClient() {
 
       // 预填充表单数据
       setServiceTypeId(assignmentData.service_type_id);
-      setMemberId(assignmentData.member_id);
       setServiceDate(assignmentData.service_date);
       setSermonTitle(assignmentData.sermon_title || "");
       setNotes(assignmentData.notes || "");
       setStatus(assignmentData.status);
+      setPrimaryMemberId(assignmentData.member_id);
+
+      // 加载同一槽位所有成员
+      const slotData = await fetchSlotAssignments(
+        profile.orgId,
+        assignmentData.service_type_id,
+        assignmentData.service_date
+      );
+      const map = new Map<string, string>();
+      slotData.forEach((s) => map.set(s.member_id, s.id));
+      setSlotMemberMap(map);
+      setSelectedMemberIds(Array.from(map.keys()));
     } catch (err: any) {
       setError(err.message || "加载失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // 切换服务类型或日期时重新加载槽位成员
+  async function reloadSlot(newTypeId: string, newDate: string) {
+    if (!orgId || !newTypeId || !newDate) return;
+    try {
+      const slotData = await fetchSlotAssignments(orgId, newTypeId, newDate);
+      const map = new Map<string, string>();
+      slotData.forEach((s) => map.set(s.member_id, s.id));
+      setSlotMemberMap(map);
+      setSelectedMemberIds(Array.from(map.keys()));
+    } catch {
+      // 忽略，保存时再处理冲突
     }
   }
 
@@ -103,26 +137,63 @@ export default function EditAssignmentClient() {
     setError("");
     setSubmitting(true);
 
-    if (!serviceTypeId || !memberId || !serviceDate) {
-      setError("请填写所有必填字段");
+    if (!serviceTypeId || !serviceDate) {
+      setError("请填写服务类型和服务日期");
+      setSubmitting(false);
+      return;
+    }
+    if (selectedMemberIds.length === 0) {
+      setError("请至少选择一位服务成员");
       setSubmitting(false);
       return;
     }
 
     try {
-      await updateServiceAssignment(
-        assignmentId,
-        serviceTypeId,
-        memberId,
-        serviceDate,
-        sermonTitle.trim() || undefined,
-        notes.trim() || undefined,
-        status
-      );
+      const notesTrimmed = notes.trim() || undefined;
+      const sermonTrimmed = sermonTitle.trim() || undefined;
+
+      // 1. 更新原就存在且仍被选中的 assignments
+      const updatePromises = selectedMemberIds
+        .filter((mid) => slotMemberMap.has(mid))
+        .map((mid) =>
+          updateServiceAssignment(
+            slotMemberMap.get(mid)!,
+            serviceTypeId,
+            mid,
+            serviceDate,
+            sermonTrimmed,
+            notesTrimmed,
+            status
+          )
+        );
+
+      // 2. 对新勾选的成员批量创建
+      const newMembers = selectedMemberIds.filter((mid) => !slotMemberMap.has(mid));
+      const createPromise =
+        newMembers.length > 0
+          ? createBatchServiceAssignments(
+              newMembers.map((mid) => ({
+                org_id: orgId,
+                service_type_id: serviceTypeId,
+                member_id: mid,
+                service_date: serviceDate,
+                sermon_title: sermonTrimmed,
+                notes: notesTrimmed,
+                status,
+              }))
+            )
+          : Promise.resolve();
+
+      // 3. 删除取消勾选成员的 assignments
+      const deletePromises = Array.from(slotMemberMap.entries())
+        .filter(([mid]) => !selectedMemberIds.includes(mid))
+        .map(([, aid]) => deleteServiceAssignment(aid));
+
+      await Promise.all([...updatePromises, createPromise, ...deletePromises]);
 
       router.push("/services");
     } catch (err: any) {
-      setError(err.message || "更新失败");
+      setError(err.message || "保存失败");
       setSubmitting(false);
     }
   }
@@ -186,7 +257,10 @@ export default function EditAssignmentClient() {
           服务类型：
           <select
             value={serviceTypeId}
-            onChange={(e) => setServiceTypeId(e.target.value)}
+            onChange={(e) => {
+              setServiceTypeId(e.target.value);
+              reloadSlot(e.target.value, serviceDate);
+            }}
             style={{
               display: "block",
               width: "100%",
@@ -206,34 +280,14 @@ export default function EditAssignmentClient() {
         </label>
 
         <label>
-          成员：
-          <select
-            value={memberId}
-            onChange={(e) => setMemberId(e.target.value)}
-            style={{
-              display: "block",
-              width: "100%",
-              padding: 8,
-              marginTop: 6,
-              border: "1px solid #ddd",
-              borderRadius: 4,
-            }}
-            required
-          >
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
           服务日期：
           <input
             type="date"
             value={serviceDate}
-            onChange={(e) => setServiceDate(e.target.value)}
+            onChange={(e) => {
+              setServiceDate(e.target.value);
+              reloadSlot(serviceTypeId, e.target.value);
+            }}
             style={{
               display: "block",
               width: "100%",
@@ -245,6 +299,79 @@ export default function EditAssignmentClient() {
             required
           />
         </label>
+
+        {/* 成员多选 */}
+        <div>
+          <div style={{ marginBottom: 6, fontWeight: 500 }}>
+            服务成员（可多选）：
+          </div>
+          <p style={{ margin: "0 0 8px", fontSize: 12, color: "#888" }}>
+            当前日期和服务类型下已有 {slotMemberMap.size} 位成员；可勾选新增或取消勾选删除。
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {members.map((m) => {
+              const isOriginalSlotMember = slotMemberMap.has(m.id);
+              const isChecked = selectedMemberIds.includes(m.id);
+              const isPrimary = m.id === primaryMemberId;
+              return (
+                <label
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: 8,
+                    background: isChecked
+                      ? isPrimary
+                        ? "#e6f0ff"
+                        : "#e6f9e6"
+                      : "white",
+                    border: isPrimary ? "1px solid #0366d6" : "1px solid #ddd",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() =>
+                      setSelectedMemberIds((prev) =>
+                        prev.includes(m.id)
+                          ? prev.filter((id) => id !== m.id)
+                          : [...prev, m.id]
+                      )
+                    }
+                    style={{ cursor: "pointer" }}
+                  />
+                  <span>
+                    {m.name}
+                    {isPrimary && (
+                      <span style={{ marginLeft: 4, fontSize: 10, color: "#0366d6" }}>
+                        （当前）
+                      </span>
+                    )}
+                    {isOriginalSlotMember && !isPrimary && (
+                      <span style={{ marginLeft: 4, fontSize: 10, color: "#888" }}>
+                        （已有）
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {selectedMemberIds.length === 0 && (
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#c00" }}>
+              请至少选择一位服务成员
+            </p>
+          )}
+        </div>
 
         {serviceTypes.find((t) => t.id === serviceTypeId)?.name ===
           "分享信息" && (
@@ -304,6 +431,14 @@ export default function EditAssignmentClient() {
             placeholder="如有特殊说明可在此填写"
           />
         </label>
+        <p style={{ margin: "4px 0 0", fontSize: 12, color: "#888" }}>
+          日历仅显示「---」前的内容（最多 40 字）。「---」后内容仅作内部备注，不在日历显示。
+        </p>
+        {getVisibleNoteLength(notes) > 40 && (
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#e57c00" }}>
+            ⚠️ 日历可见部分已超过 40 字（目前 {getVisibleNoteLength(notes)} 字），日历展示时将自动截断。
+          </p>
+        )}
 
         <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
           <button
