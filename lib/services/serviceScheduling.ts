@@ -160,6 +160,35 @@ export async function fetchServiceAssignment(id: string) {
 }
 
 /**
+ * 获取同一槽位（相同组织、服务类型、服务日期）的所有服务安排
+ * 用于编辑页加载该日期该类型下所有已分配成员
+ */
+export async function fetchSlotAssignments(
+  orgId: string,
+  serviceTypeId: string,
+  serviceDate: string
+) {
+  const { data, error } = await supabase
+    .from("service_assignments")
+    .select(
+      `
+      id,
+      member_id,
+      sermon_title,
+      notes,
+      status,
+      members (id, name)
+    `
+    )
+    .eq("org_id", orgId)
+    .eq("service_type_id", serviceTypeId)
+    .eq("service_date", serviceDate);
+
+  if (error) throw error;
+  return data || [];
+}
+
+/**
  * 创建单个服务安排
  */
 export async function createServiceAssignment(

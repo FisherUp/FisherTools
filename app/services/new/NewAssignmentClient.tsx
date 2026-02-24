@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
   fetchServiceTypes,
-  createServiceAssignment,
+  createBatchServiceAssignments,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
 import { getVisibleNoteLength } from "@/lib/utils/notes";
@@ -55,7 +55,7 @@ export default function NewAssignmentClient() {
 
   // 表单字段
   const [serviceTypeId, setServiceTypeId] = useState("");
-  const [memberId, setMemberId] = useState("");
+  const [memberIds, setMemberIds] = useState<string[]>([]);
   const [serviceDate, setServiceDate] = useState(() => {
     const today = new Date();
     return today.toISOString().split("T")[0];
@@ -86,7 +86,6 @@ export default function NewAssignmentClient() {
 
       // 默认选择第一个服务类型和成员
       if (typesData.length > 0) setServiceTypeId(typesData[0].id);
-      if (membersData.length > 0) setMemberId(membersData[0].id);
     } catch (err: any) {
       setError(err.message || "加载失败");
     } finally {
@@ -99,21 +98,23 @@ export default function NewAssignmentClient() {
     setError("");
     setSubmitting(true);
 
-    if (!serviceTypeId || !memberId || !serviceDate) {
-      setError("请填写所有必填字段");
+    if (!serviceTypeId || memberIds.length === 0 || !serviceDate) {
+      setError("请填写服务类型、服务日期，并选择至少一个成员");
       setSubmitting(false);
       return;
     }
 
     try {
-      await createServiceAssignment(
-        orgId,
-        serviceTypeId,
-        memberId,
-        serviceDate,
-        sermonTitle.trim() || undefined,
-        notes.trim() || undefined,
-        status
+      await createBatchServiceAssignments(
+        memberIds.map((mid) => ({
+          org_id: orgId,
+          service_type_id: serviceTypeId,
+          member_id: mid,
+          service_date: serviceDate,
+          sermon_title: sermonTitle.trim() || undefined,
+          notes: notes.trim() || undefined,
+          status,
+        }))
       );
 
       router.push("/services");
@@ -201,28 +202,53 @@ export default function NewAssignmentClient() {
           </select>
         </label>
 
-        <label>
-          成员：
-          <select
-            value={memberId}
-            onChange={(e) => setMemberId(e.target.value)}
+        <div>
+          <div style={{ marginBottom: 6, fontWeight: 500 }}>
+            服务成员（可多选）：
+          </div>
+          <div
             style={{
-              display: "block",
-              width: "100%",
-              padding: 8,
-              marginTop: 6,
-              border: "1px solid #ddd",
-              borderRadius: 4,
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+              gap: 8,
             }}
-            required
           >
             {members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
+              <label
+                key={m.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: 8,
+                  background: memberIds.includes(m.id) ? "#e6f9e6" : "white",
+                  border: "1px solid #ddd",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={memberIds.includes(m.id)}
+                  onChange={() =>
+                    setMemberIds((prev) =>
+                      prev.includes(m.id)
+                        ? prev.filter((id) => id !== m.id)
+                        : [...prev, m.id]
+                    )
+                  }
+                  style={{ cursor: "pointer" }}
+                />
+                <span>{m.name}</span>
+              </label>
             ))}
-          </select>
-        </label>
+          </div>
+          {memberIds.length === 0 && (
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#c00" }}>
+              请至少选择一位服务成员
+            </p>
+          )}
+        </div>
 
         <label>
           服务日期：

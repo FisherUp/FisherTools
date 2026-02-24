@@ -154,7 +154,7 @@ export default function BatchAssignmentClient() {
     return groups;
   }, [calendarDates]);
 
-  // 生成预览
+  // 生成预览：每个选中日期分配所有选中成员
   const previewAssignments = useMemo((): PreviewAssignment[] => {
     if (!serviceTypeId || selectedMemberIds.length === 0 || selectedDates.size === 0) {
       return [];
@@ -163,16 +163,15 @@ export default function BatchAssignmentClient() {
     const dates = Array.from(selectedDates).sort();
     const result: PreviewAssignment[] = [];
 
-    // 轮换算法：循环分配成员到选中的日期
-    dates.forEach((date, index) => {
-      const memberIndex = index % selectedMemberIds.length;
-      const memberId = selectedMemberIds[memberIndex];
-      const member = members.find((m) => m.id === memberId);
-
-      result.push({
-        date,
-        memberId,
-        memberName: member?.name || "未知",
+    // 全员 × 全日期：每个日期都分配所有选中成员
+    dates.forEach((date) => {
+      selectedMemberIds.forEach((memberId) => {
+        const member = members.find((m) => m.id === memberId);
+        result.push({
+          date,
+          memberId,
+          memberName: member?.name || "未知",
+        });
       });
     });
 
@@ -512,7 +511,7 @@ export default function BatchAssignmentClient() {
             }}
           >
             <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>
-              预览结果（共 {previewAssignments.length} 条）
+              预览结果（{selectedDates.size} 天 × {selectedMemberIds.length} 人 = 共 {previewAssignments.length} 条）
             </h2>
 
             <div
