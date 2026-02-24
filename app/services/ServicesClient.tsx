@@ -9,6 +9,7 @@ import {
   deleteServiceAssignment,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
+import { getCalendarNotePreview } from "@/lib/utils/notes";
 
 interface ServiceAssignment {
   id: string;
@@ -624,6 +625,24 @@ function CalendarView({
                       <div style={{ color: "#666" }}>
                         {a.members?.name || "未分配"}
                       </div>
+                      {(() => {
+                        const preview = getCalendarNotePreview(a.notes);
+                        return preview ? (
+                          <div
+                            style={{
+                              color: "#888",
+                              fontSize: 10,
+                              marginTop: 2,
+                              overflow: "hidden",
+                              whiteSpace: "nowrap",
+                              textOverflow: "ellipsis",
+                            }}
+                            title={preview}
+                          >
+                            {preview}
+                          </div>
+                        ) : null;
+                      })()}
                       {isAdmin && (
                         <div
                           style={{

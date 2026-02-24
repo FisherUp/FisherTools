@@ -8,6 +8,7 @@ import {
   createBatchServiceAssignments,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
+import { getVisibleNoteLength } from "@/lib/utils/notes";
 
 interface ServiceType {
   id: string;
@@ -84,6 +85,7 @@ export default function BatchAssignmentClient() {
   const [monthCount, setMonthCount] = useState(3); // 3个月或6个月
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
 
   useEffect(() => {
     loadData();
@@ -199,6 +201,7 @@ export default function BatchAssignmentClient() {
         service_type_id: serviceTypeId,
         member_id: p.memberId,
         service_date: p.date,
+        notes: notes.trim() || undefined,
         status: "scheduled",
       }));
 
@@ -307,6 +310,35 @@ export default function BatchAssignmentClient() {
                 <option value={6}>6个月</option>
               </select>
             </label>
+
+            <div>
+              <label>
+                备注（可选，应用到所有选中日期）：
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: 8,
+                    marginTop: 6,
+                    border: "1px solid #ddd",
+                    borderRadius: 4,
+                    minHeight: 72,
+                    boxSizing: "border-box",
+                  }}
+                  placeholder="如有特殊说明可在此填写"
+                />
+              </label>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#888" }}>
+                日历仅显示「---」前的内容（最多 40 字）。「---」后内容仅作内部备注，不在日历显示。
+              </p>
+              {getVisibleNoteLength(notes) > 40 && (
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#e57c00" }}>
+                  ⚠️ 日历可见部分已超过 40 字（目前 {getVisibleNoteLength(notes)} 字），日历展示时将自动截断。
+                </p>
+              )}
+            </div>
           </div>
         </div>
 

@@ -9,6 +9,7 @@ import {
   updateServiceAssignment,
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
+import { getVisibleNoteLength } from "@/lib/utils/notes";
 
 interface ServiceType {
   id: string;
@@ -304,6 +305,14 @@ export default function EditAssignmentClient() {
             placeholder="如有特殊说明可在此填写"
           />
         </label>
+        <p style={{ margin: "4px 0 0", fontSize: 12, color: "#888" }}>
+          日历仅显示「---」前的内容（最多 40 字）。「---」后内容仅作内部备注，不在日历显示。
+        </p>
+        {getVisibleNoteLength(notes) > 40 && (
+          <p style={{ margin: "2px 0 0", fontSize: 12, color: "#e57c00" }}>
+            ⚠️ 日历可见部分已超过 40 字（目前 {getVisibleNoteLength(notes)} 字），日历展示时将自动截断。
+          </p>
+        )}
 
         <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
           <button
