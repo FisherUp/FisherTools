@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import jsPDF from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
+import { FUND_LABELS, type FundType } from "../../lib/services/fundService";
 
 type Row = {
   id: string;
@@ -17,7 +18,7 @@ type Row = {
   created_at: string | null;
   updated_at: string | null;
   accounts: { name: string; type: "cash" | "bank" } | null;
-  categories: { name: string } | null;
+  categories: { name: string; fund_type: FundType | null } | null;
   handler1_id: string | null;
   handler2_id: string | null;
 };
@@ -257,7 +258,7 @@ export default function TransactionsClient() {
           handler1_id,
           handler2_id,
           accounts ( name, type ),
-          categories ( name )
+          categories ( name, fund_type )
         `
         )
         .gte("date", fromDate)
@@ -891,6 +892,12 @@ export default function TransactionsClient() {
             </a>
           )}
 
+          {userRole === "admin" && (
+            <a href="/funds" style={{ padding: "8px 12px", fontWeight: 700 }}>
+              🏦 基金管理
+            </a>
+          )}
+
           {userRole !== "admin" && (
             <span
               style={{
@@ -1097,13 +1104,14 @@ export default function TransactionsClient() {
       )}
 
       <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>日期</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "60px" }}>收/支</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>金额（元）</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>类别</th>
+              <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>基金</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "120px" }}>账户</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>经手人1</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>经手人2</th>
@@ -1145,6 +1153,9 @@ export default function TransactionsClient() {
                       {formatYuanFromFen(r.amount)}
                     </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.categories?.name ?? "-"}</td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: r.categories?.fund_type ? "#555" : "#bbb", fontSize: 12 }}>
+                      {r.categories?.fund_type ? FUND_LABELS[r.categories.fund_type] : "—"}
+                    </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                       {r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-"}
                     </td>
