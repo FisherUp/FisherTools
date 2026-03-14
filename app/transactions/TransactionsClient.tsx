@@ -862,6 +862,21 @@ export default function TransactionsClient() {
             PDF导出
           </button>
 
+          <a
+            href={`/transactions/report`}
+            style={{
+              padding: "8px 16px",
+              fontWeight: 700,
+              background: "#1565c0",
+              color: "#fff",
+              borderRadius: 6,
+              textDecoration: "none",
+              fontSize: 13,
+            }}
+          >
+            年度报表
+          </a>
+
           {(userRole === "admin" || userRole === "finance") && (
             <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
               + 新增
