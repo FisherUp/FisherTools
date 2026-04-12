@@ -108,7 +108,8 @@ export default function BatchAssignmentClient() {
       const [typesData, membersData] = await Promise.all([
         fetchServiceTypes(profile.orgId),
         fetchMembers(profile.orgId),
-      ]);\n
+      ]);
+
       setServiceTypes(typesData);
       setMembers(membersData);
 
