@@ -97,6 +97,12 @@ export default function BatchAssignmentClient() {
       setError("");
 
       const profile = await getMyProfile();
+
+      if (!['admin', 'coordinator'].includes(profile.role)) {
+        router.push('/services');
+        return;
+      }
+
       setOrgId(profile.orgId);
 
       const [typesData, membersData] = await Promise.all([
