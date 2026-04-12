@@ -10,6 +10,11 @@ import {
 } from "@/lib/services/serviceScheduling";
 import { fetchMembers } from "@/lib/services/inventoryService";
 import { getCalendarNotePreview } from "@/lib/utils/notes";
+import {
+  fetchUserDisplayMap,
+  resolveUserDisplay,
+  type UserDisplayMap,
+} from "@/lib/services/userDisplay";
 
 interface ServiceAssignment {
   id: string;
@@ -17,6 +22,10 @@ interface ServiceAssignment {
   sermon_title: string | null;
   notes: string | null;
   status: string;
+  created_by: string | null;
+  created_at: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
   service_types: {
     id: string;
     name: string;
@@ -70,6 +79,7 @@ export default function ServicesClient() {
   const [assignments, setAssignments] = useState<ServiceAssignment[]>([]);
   const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [userDisplayMap, setUserDisplayMap] = useState<UserDisplayMap>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -118,6 +128,15 @@ export default function ServicesClient() {
       setAssignments(assignmentsData as any);
       setServiceTypes(typesData);
       setMembers(membersData);
+
+      // 收集审计字段中的用户 ID，批量解析显示名
+      const auditIds = (assignmentsData as any[]).flatMap((a: any) =>
+        [a.created_by, a.updated_by].filter(Boolean)
+      );
+      if (auditIds.length > 0) {
+        const displayMap = await fetchUserDisplayMap(auditIds, profile.orgId);
+        setUserDisplayMap(displayMap);
+      }
     } catch (err: any) {
       setError(err.message || "加载失败");
     } finally {
@@ -169,6 +188,8 @@ export default function ServicesClient() {
   }, [assignments, filterServiceType, filterMember, filterStatus]);
 
   const isAdmin = userRole === "admin";
+  const canEdit = userRole === "admin" || userRole === "coordinator";
+  const canDelete = userRole === "admin";
 
   if (loading) {
     return <div style={{ padding: 20 }}>加载中...</div>;
@@ -203,19 +224,21 @@ export default function ServicesClient() {
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           {isAdmin && (
+            <a
+              href="/services/types"
+              style={{
+                padding: "8px 12px",
+                border: "1px solid #999",
+                color: "#666",
+                borderRadius: 4,
+                textDecoration: "none",
+              }}
+            >
+              服务类型管理
+            </a>
+          )}
+          {canEdit && (
             <>
-              <a
-                href="/services/types"
-                style={{
-                  padding: "8px 12px",
-                  border: "1px solid #999",
-                  color: "#666",
-                  borderRadius: 4,
-                  textDecoration: "none",
-                }}
-              >
-                服务类型管理
-              </a>
               <a
                 href="/services/new"
                 style={{
@@ -454,13 +477,16 @@ export default function ServicesClient() {
           assignments={filteredAssignments}
           startDate={startDate}
           endDate={endDate}
-          isAdmin={isAdmin}
+          canEdit={canEdit}
+          canDelete={canDelete}
           onDelete={handleDelete}
         />
       ) : (
         <ListView
           assignments={filteredAssignments}
-          isAdmin={isAdmin}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          userDisplayMap={userDisplayMap}
           onDelete={handleDelete}
         />
       )}
@@ -473,13 +499,15 @@ function CalendarView({
   assignments,
   startDate,
   endDate,
-  isAdmin,
+  canEdit,
+  canDelete,
   onDelete,
 }: {
   assignments: ServiceAssignment[];
   startDate: string;
   endDate: string;
-  isAdmin: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onDelete: (id: string) => void;
 }) {
   // 生成日期范围内的所有日期
@@ -637,7 +665,7 @@ function CalendarView({
                                 {first.sermon_title}
                               </div>
                             )}
-                          {/* 每位成员一行，admin 显示操作图标 */}
+                            {/* 每位成员一行，canEdit 显示编辑图标，canDelete 显示删除图标 */}
                           {visibleMembers.map((a) => (
                             <div
                               key={a.id}
@@ -651,7 +679,7 @@ function CalendarView({
                               <span style={{ color: "#555" }}>
                                 {a.members?.name || "未分配"}
                               </span>
-                              {isAdmin && (
+                              {canEdit && (
                                 <span
                                   style={{
                                     display: "flex",
@@ -672,20 +700,22 @@ function CalendarView({
                                   >
                                     ✏️
                                   </a>
-                                  <button
-                                    onClick={() => onDelete(a.id)}
-                                    style={{
-                                      fontSize: 12,
-                                      color: "#c00",
-                                      background: "none",
-                                      border: "none",
-                                      cursor: "pointer",
-                                      padding: 0,
-                                    }}
-                                    title="删除"
-                                  >
-                                    🗑️
-                                  </button>
+                                  {canDelete && (
+                                    <button
+                                      onClick={() => onDelete(a.id)}
+                                      style={{
+                                        fontSize: 12,
+                                        color: "#c00",
+                                        background: "none",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        padding: 0,
+                                      }}
+                                      title="删除"
+                                    >
+                                      🗑️
+                                    </button>
+                                  )}
                                 </span>
                               )}
                             </div>
@@ -735,11 +765,15 @@ function CalendarView({
 // 列表视图组件
 function ListView({
   assignments,
-  isAdmin,
+  canEdit,
+  canDelete,
+  userDisplayMap,
   onDelete,
 }: {
   assignments: ServiceAssignment[];
-  isAdmin: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  userDisplayMap: UserDisplayMap;
   onDelete: (id: string) => void;
 }) {
   return (
@@ -792,7 +826,18 @@ function ListView({
             >
               状态
             </th>
-            {isAdmin && (
+            <th
+              style={{
+                textAlign: "left",
+                padding: 10,
+                borderBottom: "1px solid #eee",
+                fontSize: 12,
+                color: "#666",
+              }}
+            >
+              录入信息
+            </th>
+            {canEdit && (
               <th
                 style={{
                   textAlign: "center",
@@ -809,7 +854,7 @@ function ListView({
           {assignments.length === 0 ? (
             <tr>
               <td
-                colSpan={isAdmin ? 6 : 5}
+                colSpan={canEdit ? 7 : 6}
                 style={{ padding: 20, textAlign: "center", color: "#999" }}
               >
                 暂无服务安排
@@ -864,7 +909,27 @@ function ListView({
                       : "已取消"}
                   </span>
                 </td>
-                {isAdmin && (
+                <td style={{ padding: 10, borderBottom: "1px solid #eee", fontSize: 11, color: "#888", whiteSpace: "nowrap" }}>
+                  <div>
+                    创建：{resolveUserDisplay(a.created_by, userDisplayMap)}
+                    {a.created_at && (
+                      <span style={{ marginLeft: 4, color: "#bbb" }}>
+                        {new Date(a.created_at).toLocaleDateString("zh-CN")}
+                      </span>
+                    )}
+                  </div>
+                  {a.updated_by && (
+                    <div style={{ marginTop: 2 }}>
+                      修改：{resolveUserDisplay(a.updated_by, userDisplayMap)}
+                      {a.updated_at && (
+                        <span style={{ marginLeft: 4, color: "#bbb" }}>
+                          {new Date(a.updated_at).toLocaleDateString("zh-CN")}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </td>
+                {canEdit && (
                   <td
                     style={{
                       padding: 10,
@@ -889,20 +954,22 @@ function ListView({
                       >
                         编辑
                       </a>
-                      <button
-                        onClick={() => onDelete(a.id)}
-                        style={{
-                          padding: "4px 8px",
-                          border: "1px solid #c00",
-                          color: "#c00",
-                          background: "white",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        删除
-                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => onDelete(a.id)}
+                          style={{
+                            padding: "4px 8px",
+                            border: "1px solid #c00",
+                            color: "#c00",
+                            background: "white",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            fontSize: 12,
+                          }}
+                        >
+                          删除
+                        </button>
+                      )}
                     </div>
                   </td>
                 )}

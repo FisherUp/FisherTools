@@ -119,6 +119,10 @@ export async function fetchServiceAssignments(
       sermon_title,
       notes,
       status,
+      created_by,
+      created_at,
+      updated_by,
+      updated_at,
       service_types (id, name, frequency),
       members (id, name)
     `
