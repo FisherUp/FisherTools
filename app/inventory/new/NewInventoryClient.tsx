@@ -51,6 +51,7 @@ export default function NewInventoryClient() {
   const [msg, setMsg] = useState("");
 
   const canWrite = role === "admin" || role === "finance";
+  const LS_OWNER_KEY = "inventory_default_owner_id";
 
   // 一级分类列表
   const primaryCategories = getPrimaryCategories(allCategories);
@@ -73,7 +74,15 @@ export default function NewInventoryClient() {
         setMembers(memberList);
         setAllCategories(cats);
         setLocationOptions(locs);
-        if (memberList.length > 0) setOwnerId(memberList[0].id);
+        // 默认所属人：优先用 localStorage 记忆的上次选择
+        const savedOwner = typeof window !== "undefined" ? localStorage.getItem(LS_OWNER_KEY) : null;
+        const defaultOwner =
+          savedOwner && memberList.some((m) => m.id === savedOwner)
+            ? savedOwner
+            : memberList.length > 0
+            ? memberList[0].id
+            : "";
+        setOwnerId(defaultOwner);
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
       }
@@ -100,10 +109,11 @@ export default function NewInventoryClient() {
   };
 
   // AI 解析结果填入表单
-  const handleAiApply = useCallback((item: AiParsedItem) => {
+  const handleAiApply = useCallback((item: AiParsedItem, rawInput: string) => {
     setName(item.name || "");
     setQuantity(String(item.quantity || 1));
     setNotes(item.notes || "");
+    setAiRawInput(rawInput);  // 修复：正确进行设置
 
     // 根据 AI 返回的分类名匹配数据库分类
     if (item.primary_category) {
@@ -228,8 +238,8 @@ export default function NewInventoryClient() {
       {/* AI 智能录入面板 */}
       {canWrite && (
         <AiInputPanel
-          onApply={(item) => {
-            handleAiApply(item);
+          onApply={(item, rawInput) => {
+            handleAiApply(item, rawInput);
           }}
           disabled={!canWrite}
         />
@@ -282,7 +292,12 @@ export default function NewInventoryClient() {
           所属人（必填）：
           <select
             value={ownerId}
-            onChange={(e) => setOwnerId(e.target.value)}
+            onChange={(e) => {
+              setOwnerId(e.target.value);
+              if (typeof window !== "undefined") {
+                localStorage.setItem(LS_OWNER_KEY, e.target.value);
+              }
+            }}
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4, boxSizing: "border-box" }}
           >
             {members.length === 0 && <option value="">（暂无可用成员）</option>}

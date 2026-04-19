@@ -13,8 +13,8 @@ export type AiParsedItem = {
 };
 
 type Props = {
-  onApply: (item: AiParsedItem) => void;
-  onBatchApply?: (items: AiParsedItem[]) => void;
+  onApply: (item: AiParsedItem, rawInput: string) => void;
+  onBatchApply?: (items: AiParsedItem[], rawInput: string) => void;
   disabled?: boolean;
 };
 
@@ -159,13 +159,13 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
   // ─── 应用到表单 ───
   const handleApplyItem = (item: AiParsedItem) => {
-    onApply(item);
+    onApply(item, inputText);
     setExpanded(false);
   };
 
   const handleApplyAll = () => {
     if (onBatchApply && parsedItems.length > 0) {
-      onBatchApply(parsedItems);
+      onBatchApply(parsedItems, inputText);
       setExpanded(false);
     }
   };

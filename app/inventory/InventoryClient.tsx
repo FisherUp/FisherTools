@@ -17,12 +17,14 @@ import {
   getSubCategories,
   getCategoryDisplayText,
 } from "../../lib/services/inventoryService";
+import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
 
 type MemberMap = Map<string, string>;
 
 export default function InventoryClient() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [memberMap, setMemberMap] = useState<MemberMap>(new Map());
+  const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
   const [imageUrlMap, setImageUrlMap] = useState<Map<string, string>>(new Map());
   const [categoryOptions, setCategoryOptions] = useState<InventoryCategory[]>([]);
   const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
@@ -64,6 +66,17 @@ export default function InventoryClient() {
         const paths = list.map((i) => i.image_path);
         const urlMap = await batchGetSignedUrls(paths);
         setImageUrlMap(urlMap);
+
+        // 加载录入人/修改人显示名
+        const auditIds = Array.from(
+          new Set(
+            list.flatMap((i) => [i.created_by, i.updated_by]).filter(Boolean) as string[]
+          )
+        );
+        if (auditIds.length > 0) {
+          const displayMap = await fetchUserDisplayMap(auditIds, profile.orgId);
+          setUserDisplayMap(displayMap);
+        }
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
       } finally {
@@ -202,7 +215,7 @@ export default function InventoryClient() {
         <div style={{ padding: 20, color: "#666" }}>加载中…</div>
       ) : (
         <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1000 }}>
             <thead>
               <tr style={{ background: "#fafafa" }}>
                 <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: 72 }}>图片</th>
@@ -212,13 +225,14 @@ export default function InventoryClient() {
                 <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee" }}>数量</th>
                 <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>位置</th>
                 <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>状态</th>
-                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>更新时间</th>
+                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>录入人</th>
+                <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>最近修改</th>
               </tr>
             </thead>
             <tbody>
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: 20, color: "#666", textAlign: "center" }}>
+                  <td colSpan={9} style={{ padding: 20, color: "#666", textAlign: "center" }}>
                     暂无物资记录
                   </td>
                 </tr>
@@ -226,7 +240,8 @@ export default function InventoryClient() {
                 filteredItems.map((item) => {
                   const imgUrl = item.image_path ? imageUrlMap.get(item.image_path) : null;
                   const ownerName = memberMap.get(item.owner_id) ?? "-";
-
+                  const createdByName = resolveUserDisplay(item.created_by, userDisplayMap);
+                  const updatedByName = item.updated_by ? resolveUserDisplay(item.updated_by, userDisplayMap) : null;
                   return (
                     <tr
                       key={item.id}
@@ -325,8 +340,21 @@ export default function InventoryClient() {
                           {statusLabel(item.status)}
                         </span>
                       </td>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontSize: 13, color: "#666" }}>
-                        {fmtDate(item.updated_at)}
+                      {/* 录入人 */}
+                      <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontSize: 12, color: "#555" }}>
+                        {createdByName}
+                        <div style={{ color: "#aaa", fontSize: 11, marginTop: 1 }}>{fmtDate(item.created_at)}</div>
+                      </td>
+                      {/* 最近修改 */}
+                      <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontSize: 12, color: "#555" }}>
+                        {updatedByName ? (
+                          <>
+                            {updatedByName}
+                            <div style={{ color: "#aaa", fontSize: 11, marginTop: 1 }}>{fmtDate(item.updated_at)}</div>
+                          </>
+                        ) : (
+                          <span style={{ color: "#ccc" }}>—</span>
+                        )}
                       </td>
                     </tr>
                   );
