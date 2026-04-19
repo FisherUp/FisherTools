@@ -11,6 +11,7 @@ export type InventoryItem = {
   org_id: string;
   name: string;
   category: string | null;
+  sub_category: string | null;
   owner_id: string;
   quantity: number;
   location: string | null;
@@ -28,6 +29,7 @@ export type InventoryCategory = {
   org_id: string;
   name: string;
   value: string;
+  parent_id: string | null;
   is_active: boolean;
   sort_order: number;
 };
@@ -39,6 +41,38 @@ export type InventoryLocation = {
   value: string;
   is_active: boolean;
   sort_order: number;
+};
+
+export type ItemRule = {
+  id: string;
+  org_id: string;
+  item_id: string;
+  min_quantity: number;
+  max_quantity: number | null;
+};
+
+export type ItemChangeLog = {
+  id: string;
+  org_id: string;
+  item_id: string;
+  action: string;
+  field_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string | null;
+  changed_at: string;
+};
+
+export type IntakeLog = {
+  id: string;
+  org_id: string;
+  raw_input: string;
+  parsed_result: any;
+  item_id: string | null;
+  input_type: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
 };
 
 // ─── 枚举选项 ───
@@ -135,7 +169,7 @@ export async function fetchInventoryItem(id: string): Promise<InventoryItem> {
 
 /** 创建物资，返回新 ID */
 export async function createInventoryItem(
-  item: Pick<InventoryItem, "org_id" | "name" | "category" | "owner_id" | "quantity" | "location" | "status" | "notes">
+  item: Pick<InventoryItem, "org_id" | "name" | "category" | "sub_category" | "owner_id" | "quantity" | "location" | "status" | "notes">
 ): Promise<string> {
   const { data, error } = await supabase
     .from("inventory_items")
@@ -150,7 +184,7 @@ export async function createInventoryItem(
 /** 更新物资 */
 export async function updateInventoryItem(
   id: string,
-  updates: Partial<Pick<InventoryItem, "name" | "category" | "owner_id" | "quantity" | "location" | "status" | "notes" | "image_path">>
+  updates: Partial<Pick<InventoryItem, "name" | "category" | "sub_category" | "owner_id" | "quantity" | "location" | "status" | "notes" | "image_path">>
 ): Promise<void> {
   const { error } = await supabase
     .from("inventory_items")
@@ -274,7 +308,7 @@ export async function fetchAllMembers(orgId: string): Promise<Map<string, string
 export async function fetchInventoryCategories(orgId: string): Promise<InventoryCategory[]> {
   const { data, error } = await supabase
     .from("inventory_categories")
-    .select("*")
+    .select("*, parent_id")
     .eq("org_id", orgId)
     .eq("is_active", true)
     .order("sort_order", { ascending: true });
@@ -287,7 +321,7 @@ export async function fetchInventoryCategories(orgId: string): Promise<Inventory
 export async function fetchAllInventoryCategories(orgId: string): Promise<InventoryCategory[]> {
   const { data, error } = await supabase
     .from("inventory_categories")
-    .select("*")
+    .select("*, parent_id")
     .eq("org_id", orgId)
     .order("sort_order", { ascending: true });
 
@@ -320,15 +354,16 @@ export async function fetchAllInventoryLocations(orgId: string): Promise<Invento
   return (data ?? []) as InventoryLocation[];
 }
 
-/** 创建类别（value 自动使用 name） */
+/** 创建类别（value 自动使用 name，支持 parent_id） */
 export async function createInventoryCategory(
   orgId: string,
   name: string,
-  sortOrder: number = 0
+  sortOrder: number = 0,
+  parentId: string | null = null
 ): Promise<string> {
   const { data, error } = await supabase
     .from("inventory_categories")
-    .insert({ org_id: orgId, name, value: name, sort_order: sortOrder })
+    .insert({ org_id: orgId, name, value: name, sort_order: sortOrder, parent_id: parentId })
     .select("id")
     .single();
 
@@ -396,4 +431,178 @@ export async function deleteInventoryLocation(id: string): Promise<void> {
     .eq("id", id);
 
   if (error) throw new Error("删除位置失败：" + error.message);
+}
+
+// ─── 二级分类辅助 ───
+
+/** 获取一级分类列表 */
+export function getPrimaryCategories(categories: InventoryCategory[]): InventoryCategory[] {
+  return categories.filter((c) => !c.parent_id);
+}
+
+/** 获取某一级分类下的二级分类 */
+export function getSubCategories(categories: InventoryCategory[], parentId: string): InventoryCategory[] {
+  return categories.filter((c) => c.parent_id === parentId);
+}
+
+/** 根据 value 查找分类名称 */
+export function findCategoryByValue(categories: InventoryCategory[], value: string | null): InventoryCategory | undefined {
+  if (!value) return undefined;
+  return categories.find((c) => c.value === value);
+}
+
+/** 根据二级分类 value，返回 "一级 > 二级" 显示文本 */
+export function getCategoryDisplayText(
+  categories: InventoryCategory[],
+  primaryValue: string | null,
+  subValue: string | null
+): string {
+  const primary = findCategoryByValue(categories, primaryValue);
+  const sub = findCategoryByValue(categories, subValue);
+  if (primary && sub) return `${primary.name} > ${sub.name}`;
+  if (primary) return primary.name;
+  if (sub) return sub.name;
+  return "-";
+}
+
+// ─── 物资规则 ───
+
+/** 获取物资规则 */
+export async function fetchItemRule(itemId: string): Promise<ItemRule | null> {
+  const { data, error } = await supabase
+    .from("item_rules")
+    .select("*")
+    .eq("item_id", itemId)
+    .maybeSingle();
+
+  if (error) throw new Error("加载物资规则失败：" + error.message);
+  return data as ItemRule | null;
+}
+
+/** 批量获取物资规则 */
+export async function fetchItemRules(orgId: string): Promise<Map<string, ItemRule>> {
+  const { data, error } = await supabase
+    .from("item_rules")
+    .select("*")
+    .eq("org_id", orgId);
+
+  if (error) throw new Error("加载物资规则失败：" + error.message);
+  const map = new Map<string, ItemRule>();
+  (data ?? []).forEach((r: any) => map.set(r.item_id, r as ItemRule));
+  return map;
+}
+
+/** 创建或更新物资规则 */
+export async function upsertItemRule(
+  orgId: string,
+  itemId: string,
+  minQuantity: number,
+  maxQuantity: number | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("item_rules")
+    .upsert(
+      { org_id: orgId, item_id: itemId, min_quantity: minQuantity, max_quantity: maxQuantity },
+      { onConflict: "item_id" }
+    );
+
+  if (error) throw new Error("保存物资规则失败：" + error.message);
+}
+
+// ─── 变更日志 ───
+
+/** 写入变更日志（多个字段变更） */
+export async function logItemChanges(
+  orgId: string,
+  itemId: string,
+  action: "create" | "update" | "delete",
+  changes: { field_name: string; old_value: string | null; new_value: string | null }[]
+): Promise<void> {
+  if (changes.length === 0 && action === "update") return;
+
+  const rows = action === "update"
+    ? changes.map((c) => ({
+        org_id: orgId,
+        item_id: itemId,
+        action,
+        field_name: c.field_name,
+        old_value: c.old_value,
+        new_value: c.new_value,
+      }))
+    : [{ org_id: orgId, item_id: itemId, action, field_name: null, old_value: null, new_value: null }];
+
+  const { error } = await supabase.from("item_change_logs").insert(rows);
+  if (error) console.warn("写入变更日志失败：", error.message);
+}
+
+/** 获取物资变更日志 */
+export async function fetchItemChangeLogs(itemId: string): Promise<ItemChangeLog[]> {
+  const { data, error } = await supabase
+    .from("item_change_logs")
+    .select("*")
+    .eq("item_id", itemId)
+    .order("changed_at", { ascending: false })
+    .limit(50);
+
+  if (error) throw new Error("加载变更日志失败：" + error.message);
+  return (data ?? []) as ItemChangeLog[];
+}
+
+// ─── AI 录入日志 ───
+
+/** 创建 AI 录入日志 */
+export async function createIntakeLog(
+  orgId: string,
+  rawInput: string,
+  parsedResult: any,
+  inputType: "voice" | "text"
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("intake_logs")
+    .insert({
+      org_id: orgId,
+      raw_input: rawInput,
+      parsed_result: parsedResult,
+      input_type: inputType,
+      status: "parsed",
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error("保存录入日志失败：" + error.message);
+  return data.id;
+}
+
+/** 更新录入日志状态（确认后关联 item_id） */
+export async function confirmIntakeLog(
+  logId: string,
+  itemId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("intake_logs")
+    .update({ item_id: itemId, status: "confirmed" })
+    .eq("id", logId);
+
+  if (error) console.warn("更新录入日志失败：", error.message);
+}
+
+// ─── 变更对比辅助 ───
+
+/** 比较旧值和新值，返回差异字段列表 */
+export function diffItemFields(
+  oldItem: Record<string, any>,
+  newItem: Record<string, any>,
+  fields: string[]
+): { field_name: string; old_value: string | null; new_value: string | null }[] {
+  const changes: { field_name: string; old_value: string | null; new_value: string | null }[] = [];
+  for (const f of fields) {
+    const ov = oldItem[f] ?? null;
+    const nv = newItem[f] ?? null;
+    const ovStr = ov === null ? null : String(ov);
+    const nvStr = nv === null ? null : String(nv);
+    if (ovStr !== nvStr) {
+      changes.push({ field_name: f, old_value: ovStr, new_value: nvStr });
+    }
+  }
+  return changes;
 }

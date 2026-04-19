@@ -18,6 +18,10 @@ import {
   fetchInventoryLocations,
   STATUS_OPTIONS,
   MAX_FILE_SIZE,
+  getPrimaryCategories,
+  getSubCategories,
+  logItemChanges,
+  diffItemFields,
 } from "../../../../lib/services/inventoryService";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
 
@@ -29,12 +33,16 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [allMemberMap, setAllMemberMap] = useState<Map<string, string>>(new Map());
   const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
-  const [categoryOptions, setCategoryOptions] = useState<InventoryCategory[]>([]);
+  const [allCategories, setAllCategories] = useState<InventoryCategory[]>([]);
   const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
+
+  // 原始数据（用于变更对比）
+  const [originalItem, setOriginalItem] = useState<InventoryItem | null>(null);
 
   // 表单字段
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
+  const [primaryCategory, setPrimaryCategory] = useState("");
+  const [subCategory, setSubCategory] = useState("");
   const [ownerId, setOwnerId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [location, setLocation] = useState("");
@@ -58,6 +66,16 @@ export default function EditInventoryClient({ id }: { id: string }) {
 
   const canWrite = role === "admin" || role === "finance";
   const isAdmin = role === "admin";
+
+  // 一级/二级分类
+  const primaryCategories = getPrimaryCategories(allCategories);
+  const selectedPrimary = primaryCategories.find((c) => c.value === primaryCategory);
+  const subCategories = selectedPrimary ? getSubCategories(allCategories, selectedPrimary.id) : [];
+
+  const handlePrimaryCategoryChange = (val: string) => {
+    setPrimaryCategory(val);
+    setSubCategory("");
+  };
 
   const fmtDateTimeMaybe = (v: string | null) => {
     if (!v) return "-";
@@ -100,7 +118,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
 
         setMembers(memberList);
         setAllMemberMap(memberMap);
-        setCategoryOptions(cats);
+        setAllCategories(cats);
         setLocationOptions(locs);
 
         // 如果当前 owner_id 不在活跃成员中，也加进下拉
@@ -111,7 +129,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
 
         // 填充表单
         setName(item.name);
-        setCategory(item.category ?? "");
+        setPrimaryCategory(item.category ?? "");
+        setSubCategory(item.sub_category ?? "");
         setOwnerId(item.owner_id);
         setQuantity(String(item.quantity));
         setLocation(item.location ?? "");
@@ -122,6 +141,9 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setUpdatedBy(item.updated_by);
         setCreatedAt(item.created_at);
         setUpdatedAt(item.updated_at);
+
+        // 保存原始数据用于变更对比
+        setOriginalItem(item);
 
         // 加载用户显示名
         const auditIds = [item.created_by, item.updated_by].filter(Boolean) as string[];
@@ -155,16 +177,34 @@ export default function EditInventoryClient({ id }: { id: string }) {
 
     setLoading(true);
     try {
-      await updateInventoryItem(id, {
+      const newData = {
         name: name.trim(),
-        category: category || null,
+        category: primaryCategory || null,
+        sub_category: subCategory || null,
         owner_id: ownerId,
         quantity: qty,
         location: location || null,
         status,
         notes: notes.trim() || null,
-      });
+      };
+
+      await updateInventoryItem(id, newData);
+
+      // 记录变更日志
+      if (originalItem && orgId) {
+        const changes = diffItemFields(
+          originalItem,
+          { ...newData, quantity: qty },
+          ["name", "category", "sub_category", "owner_id", "quantity", "location", "status", "notes"]
+        );
+        if (changes.length > 0) {
+          await logItemChanges(orgId, id, "update", changes);
+        }
+      }
+
       setMsg("✅ 保存成功");
+      // 更新 originalItem 为当前值
+      setOriginalItem({ ...originalItem!, ...newData, quantity: qty });
     } catch (e: any) {
       setMsg(String(e?.message ?? e));
     } finally {
@@ -300,18 +340,34 @@ export default function EditInventoryClient({ id }: { id: string }) {
         </label>
 
         <label>
-          类别：
+          一级分类：
           <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            value={primaryCategory}
+            onChange={(e) => handlePrimaryCategoryChange(e.target.value)}
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           >
             <option value="">（可选）</option>
-            {categoryOptions.map((o) => (
+            {primaryCategories.map((o) => (
               <option key={o.id} value={o.value}>{o.name}</option>
             ))}
           </select>
         </label>
+
+        {primaryCategory && subCategories.length > 0 && (
+          <label>
+            二级分类：
+            <select
+              value={subCategory}
+              onChange={(e) => setSubCategory(e.target.value)}
+              style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
+            >
+              <option value="">（可选）</option>
+              {subCategories.map((o) => (
+                <option key={o.id} value={o.value}>{o.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label>
           所属人（必填）：
