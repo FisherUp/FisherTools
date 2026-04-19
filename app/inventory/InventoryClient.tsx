@@ -13,6 +13,9 @@ import {
   getMyProfile,
   statusLabel,
   STATUS_OPTIONS,
+  getPrimaryCategories,
+  getSubCategories,
+  getCategoryDisplayText,
 } from "../../lib/services/inventoryService";
 
 type MemberMap = Map<string, string>;
@@ -90,8 +93,10 @@ export default function InventoryClient() {
         const notesMatch = (item.notes ?? "").toLowerCase().includes(q);
         if (!nameMatch && !notesMatch) return false;
       }
-      // 类别
-      if (filterCategory && item.category !== filterCategory) return false;
+      // 类别（筛选一级分类时，同时匹配该一级及其下属二级的物资）
+      if (filterCategory) {
+        if (item.category !== filterCategory && item.sub_category !== filterCategory) return false;
+      }
       // 状态
       if (filterStatus && item.status !== filterStatus) return false;
       // 所属人
@@ -154,7 +159,7 @@ export default function InventoryClient() {
           style={{ padding: "6px 10px", border: "1px solid #ddd", borderRadius: 6 }}
         >
           <option value="">全部类别</option>
-          {categoryOptions.map((o) => (
+          {getPrimaryCategories(categoryOptions).map((o) => (
             <option key={o.id} value={o.value}>
               {o.name}
             </option>
@@ -276,8 +281,8 @@ export default function InventoryClient() {
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontWeight: 600 }}>
                         {item.name}
                       </td>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
-                        {item.category ? (categoryOptions.find((c) => c.value === item.category)?.name ?? item.category) : "-"}
+                      <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", fontSize: 13 }}>
+                        {getCategoryDisplayText(categoryOptions, item.category, item.sub_category)}
                       </td>
                       <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>
                         {ownerName}
