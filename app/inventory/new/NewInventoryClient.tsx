@@ -50,7 +50,7 @@ export default function NewInventoryClient() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  const canWrite = role === "admin" || role === "finance";
+  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit";
   const LS_OWNER_KEY = "inventory_default_owner_id";
 
   // 一级分类列表
