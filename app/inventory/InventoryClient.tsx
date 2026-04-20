@@ -18,6 +18,7 @@ import {
   getCategoryDisplayText,
 } from "../../lib/services/inventoryService";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
+import { supabase } from "../../lib/supabaseClient";
 
 type MemberMap = Map<string, string>;
 
@@ -40,7 +41,13 @@ export default function InventoryClient() {
   const [filterOwner, setFilterOwner] = useState("");
 
   const isAdmin = role === "admin";
-  const canWrite = role === "admin" || role === "finance";
+  const isInventoryEditOnly = role === "inventory-edit";
+  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit";
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -145,12 +152,33 @@ export default function InventoryClient() {
               ⚙️ 类别/位置设置
             </a>
           )}
-          <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
-            ← 返回流水
-          </a>
-          <a href="/leaves" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
-            休假管理
-          </a>
+          {!isInventoryEditOnly && (
+            <>
+              <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
+                ← 返回流水
+              </a>
+              <a href="/leaves" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
+                休假管理
+              </a>
+            </>
+          )}
+          {isInventoryEditOnly && (
+            <button
+              onClick={handleSignOut}
+              style={{
+                padding: "8px 14px",
+                border: "1px solid #d0372e",
+                borderRadius: 6,
+                background: "#fff",
+                color: "#d0372e",
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: 14,
+              }}
+            >
+              退出登录
+            </button>
+          )}
         </div>
       </div>
 

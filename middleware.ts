@@ -45,11 +45,16 @@ export async function middleware(req: NextRequest) {
 
   // 3) 登录页逻辑：
   //    - 未登录：允许访问 /login
-  //    - 已登录：禁止停留在 /login，直接送到 /transactions
+  //    - 已登录：禁止停留在 /login，根据角色跳转
   if (pathname === "/login") {
     if (session) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", session.user.id)
+        .single();
       const url = req.nextUrl.clone();
-      url.pathname = "/transactions";
+      url.pathname = profile?.role === "inventory-edit" ? "/inventory" : "/transactions";
       url.search = "";
       return NextResponse.redirect(url);
     }
@@ -64,9 +69,25 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // 5) inventory-edit 角色：只允许访问 /inventory 及其子路由
+  if (!pathname.startsWith("/inventory")) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", session.user.id)
+      .single();
+    if (profile?.role === "inventory-edit") {
+      const url = req.nextUrl.clone();
+      url.pathname = "/inventory";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+  }
+
   return res;
 }
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
+
