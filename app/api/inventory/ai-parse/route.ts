@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. 解析请求体
-  let body: { text: string };
+  let body: { text?: string; imageBase64?: string; imageMimeType?: string };
   try {
     body = await req.json();
   } catch {
@@ -48,8 +48,11 @@ export async function POST(req: NextRequest) {
   }
 
   const rawText = (body.text ?? "").trim();
-  if (!rawText) {
-    return NextResponse.json({ error: "输入文本为空" }, { status: 400 });
+  const imageBase64 = (body.imageBase64 ?? "").trim();
+  const imageMimeType = body.imageMimeType || "image/jpeg";
+
+  if (!rawText && !imageBase64) {
+    return NextResponse.json({ error: "请提供文本或图片" }, { status: 400 });
   }
 
   // 4. 从数据库加载二级分类树（用于 AI prompt）
@@ -78,6 +81,16 @@ export async function POST(req: NextRequest) {
 
   const locationNames = (locations ?? []).map((l: any) => l.name);
 
+  // 5b. 加载单位列表
+  const { data: units } = await supabase
+    .from("inventory_units")
+    .select("name")
+    .eq("org_id", profile.org_id)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  const unitNames = (units ?? []).map((u: any) => u.name);
+
   // 6. 构建 AI prompt
   const categoryDescription = categoryTree
     .map(
@@ -93,11 +106,15 @@ ${categoryDescription}
 
 可用的位置：${locationNames.length > 0 ? locationNames.join("、") : "无预设位置"}
 
+可用的计量单位：${unitNames.length > 0 ? unitNames.join("、") : "个、把、件、套、箱、卷、条、双、本、张、包、瓶、块、台、组"}
+
 请从用户输入中提取以下字段：
 - name: 物资名称（必填，简洁明确）
 - primary_category: 一级分类名称（从上面列表中选择最匹配的）
 - sub_category: 二级分类名称（从对应一级分类的子分类中选择最匹配的）
 - quantity: 数量（整数，默认1）
+- unit: 计量单位（从上面单位列表中匹配，如"个"、"把"、"箱"等；无法匹配则留空）
+- unit_price: 预估单价（整数，单位为"分"，即人民币分；如用户说"约20元"则填2000；无法判断则填0）
 - location: 位置（从上面列表匹配，无法匹配则留空）
 - status: 状态（in_use=在用, idle=闲置, pending=待处理, disposed=已处理, lent_out=借出，默认 in_use）
 - notes: 备注（用户提到的额外信息）
@@ -112,6 +129,8 @@ ${categoryDescription}
       "primary_category": "...",
       "sub_category": "...",
       "quantity": 1,
+      "unit": "个",
+      "unit_price": 0,
       "location": "",
       "status": "in_use",
       "notes": ""
@@ -135,6 +154,25 @@ ${categoryDescription}
   const url = `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
 
   try {
+    // 构建用户消息：文字模式或图片视觉模式
+    const userMessage = imageBase64
+      ? {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: `data:${imageMimeType};base64,${imageBase64}` },
+            },
+            {
+              type: "text",
+              text: rawText
+                ? rawText
+                : "请识别图片中的所有物品，按要求返回 JSON。",
+            },
+          ],
+        }
+      : { role: "user", content: rawText };
+
     const aiRes = await fetch(url, {
       method: "POST",
       headers: {
@@ -144,7 +182,7 @@ ${categoryDescription}
       body: JSON.stringify({
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: rawText },
+          userMessage,
         ],
         temperature: 0.1,
         max_tokens: 2000,
@@ -176,7 +214,7 @@ ${categoryDescription}
 
     return NextResponse.json({
       items: parsed.items ?? [],
-      raw_input: rawText,
+      raw_input: rawText || "[图片识别]",
     });
   } catch (e: any) {
     console.error("AI parse error:", e);

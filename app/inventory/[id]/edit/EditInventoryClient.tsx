@@ -16,6 +16,9 @@ import {
   fetchAllMembers,
   fetchInventoryCategories,
   fetchInventoryLocations,
+  fetchInventoryUnits,
+  createInventoryUnit,
+  InventoryUnit,
   STATUS_OPTIONS,
   MAX_FILE_SIZE,
   getPrimaryCategories,
@@ -35,6 +38,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
   const [allCategories, setAllCategories] = useState<InventoryCategory[]>([]);
   const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
+  const [unitOptions, setUnitOptions] = useState<InventoryUnit[]>([]);
 
   // 原始数据（用于变更对比）
   const [originalItem, setOriginalItem] = useState<InventoryItem | null>(null);
@@ -48,6 +52,11 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [location, setLocation] = useState("");
   const [status, setStatus] = useState("in_use");
   const [notes, setNotes] = useState("");
+  const [unit, setUnit] = useState("");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [unitPriceDisplay, setUnitPriceDisplay] = useState(""); // 显示用（元）
+  const [newUnitName, setNewUnitName] = useState("");
+  const [addingUnit, setAddingUnit] = useState(false);
 
   // 图片
   const [imagePath, setImagePath] = useState<string | null>(null);
@@ -108,18 +117,20 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setOrgId(profile.orgId);
         setRole(profile.role);
 
-        const [item, memberList, memberMap, cats, locs] = await Promise.all([
+        const [item, memberList, memberMap, cats, locs, units] = await Promise.all([
           fetchInventoryItem(id),
           fetchMembers(profile.orgId),
           fetchAllMembers(profile.orgId),
           fetchInventoryCategories(profile.orgId),
           fetchInventoryLocations(profile.orgId),
+          fetchInventoryUnits(profile.orgId),
         ]);
 
         setMembers(memberList);
         setAllMemberMap(memberMap);
         setAllCategories(cats);
         setLocationOptions(locs);
+        setUnitOptions(units);
 
         // 如果当前 owner_id 不在活跃成员中，也加进下拉
         if (item.owner_id && !memberList.some((m) => m.id === item.owner_id)) {
@@ -136,6 +147,9 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setLocation(item.location ?? "");
         setStatus(item.status);
         setNotes(item.notes ?? "");
+        setUnit(item.unit ?? "");
+        setUnitPrice(item.unit_price ? String(item.unit_price) : "");
+        setUnitPriceDisplay(item.unit_price ? (item.unit_price / 100).toFixed(2) : "");
         setImagePath(item.image_path);
         setCreatedBy(item.created_by);
         setUpdatedBy(item.updated_by);
@@ -186,6 +200,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
         location: location || null,
         status,
         notes: notes.trim() || null,
+        unit: unit || null,
+        unit_price: unitPrice ? parseInt(unitPrice) : null,
       };
 
       await updateInventoryItem(id, newData);
@@ -195,7 +211,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
         const changes = diffItemFields(
           originalItem,
           { ...newData, quantity: qty },
-          ["name", "category", "sub_category", "owner_id", "quantity", "location", "status", "notes"]
+          ["name", "category", "sub_category", "owner_id", "quantity", "location", "status", "notes", "unit", "unit_price"]
         );
         if (changes.length > 0) {
           await logItemChanges(orgId, id, "update", changes);
@@ -243,6 +259,24 @@ export default function EditInventoryClient({ id }: { id: string }) {
       setImgMsg(String(e?.message ?? e));
     } finally {
       setUploading(false);
+    }
+  };
+
+  // 新增单位
+  const handleAddUnit = async () => {
+    const n = newUnitName.trim();
+    if (!n || !orgId) return;
+    setAddingUnit(true);
+    try {
+      await createInventoryUnit(orgId, n);
+      const updated = await fetchInventoryUnits(orgId);
+      setUnitOptions(updated);
+      setUnit(n);
+      setNewUnitName("");
+    } catch (e: any) {
+      setMsg("新增单位失败：" + (e?.message ?? e));
+    } finally {
+      setAddingUnit(false);
     }
   };
 
@@ -391,6 +425,44 @@ export default function EditInventoryClient({ id }: { id: string }) {
             onChange={(e) => setQuantity(e.target.value)}
             style={{ display: "block", width: "100%", padding: 8, marginTop: 4 }}
           />
+        </label>
+
+        <label>
+          单位：
+          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+            <select value={unit} onChange={(e) => setUnit(e.target.value)}
+              style={{ flex: 1, padding: 8, boxSizing: "border-box" as const }}>
+              <option value="">（可选）</option>
+              {unitOptions.map((u) => <option key={u.id} value={u.name}>{u.name}</option>)}
+            </select>
+            <input value={newUnitName} onChange={(e) => setNewUnitName(e.target.value)}
+              placeholder="新增单位…" style={{ width: 100, padding: 8 }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddUnit(); } }} />
+            <button type="button" onClick={handleAddUnit} disabled={addingUnit || !newUnitName.trim()}
+              style={{ padding: "8px 10px", background: "#1a73e8", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
+              {addingUnit ? "…" : "+ 单位"}
+            </button>
+          </div>
+        </label>
+
+        <label>
+          预估单价（人民币）：
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <span style={{ fontSize: 14 }}>¥</span>
+            <input type="number" min={0} step={0.01}
+              value={unitPriceDisplay}
+              onChange={(e) => {
+                setUnitPriceDisplay(e.target.value);
+                const fen = Math.round(parseFloat(e.target.value || "0") * 100);
+                setUnitPrice(Number.isFinite(fen) ? String(fen) : "");
+              }}
+              placeholder="0.00" style={{ flex: 1, padding: 8, boxSizing: "border-box" as const }} />
+            {unitPrice && Number(unitPrice) > 0 && (
+              <span style={{ fontSize: 13, color: "#666" }}>
+                合计：¥{((parseInt(quantity) || 0) * Number(unitPrice) / 100).toFixed(2)}
+              </span>
+            )}
+          </div>
         </label>
 
         <label>

@@ -14,6 +14,8 @@ export type InventoryItem = {
   sub_category: string | null;
   owner_id: string;
   quantity: number;
+  unit: string | null;
+  unit_price: number | null;  // 单位：分（整数）
   location: string | null;
   status: string;
   notes: string | null;
@@ -22,6 +24,14 @@ export type InventoryItem = {
   updated_at: string;
   created_by: string | null;
   updated_by: string | null;
+};
+
+export type InventoryUnit = {
+  id: string;
+  org_id: string;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
 };
 
 export type InventoryCategory = {
@@ -118,6 +128,18 @@ export function locationLabel(v: string | null): string {
   return LOCATION_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
+/** 金额（分） 转 元 显示，如 350 → "¥3.50" */
+export function fmtYuan(fen: number | null | undefined): string {
+  if (fen == null) return "-";
+  return "¥" + (fen / 100).toFixed(2);
+}
+
+/** 计算总价（分），数量 × 单价 */
+export function calcTotalPrice(item: Pick<InventoryItem, "quantity" | "unit_price">): number | null {
+  if (item.unit_price == null || item.unit_price === 0) return null;
+  return item.quantity * item.unit_price;
+}
+
 // ─── 通用 Profile 读取（复用现有模式）───
 export async function getMyProfile() {
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -169,7 +191,7 @@ export async function fetchInventoryItem(id: string): Promise<InventoryItem> {
 
 /** 创建物资，返回新 ID */
 export async function createInventoryItem(
-  item: Pick<InventoryItem, "org_id" | "name" | "category" | "sub_category" | "owner_id" | "quantity" | "location" | "status" | "notes">
+  item: Pick<InventoryItem, "org_id" | "name" | "category" | "sub_category" | "owner_id" | "quantity" | "unit" | "unit_price" | "location" | "status" | "notes">
 ): Promise<string> {
   const { data, error } = await supabase
     .from("inventory_items")
@@ -184,7 +206,7 @@ export async function createInventoryItem(
 /** 更新物资 */
 export async function updateInventoryItem(
   id: string,
-  updates: Partial<Pick<InventoryItem, "name" | "category" | "sub_category" | "owner_id" | "quantity" | "location" | "status" | "notes" | "image_path">>
+  updates: Partial<Pick<InventoryItem, "name" | "category" | "sub_category" | "owner_id" | "quantity" | "unit" | "unit_price" | "location" | "status" | "notes" | "image_path">>
 ): Promise<void> {
   const { error } = await supabase
     .from("inventory_items")
@@ -606,3 +628,55 @@ export function diffItemFields(
   }
   return changes;
 }
+
+// ─── 单位管理 ───
+
+/** 获取单位列表（仅启用，用于表单下拉） */
+export async function fetchInventoryUnits(orgId: string): Promise<InventoryUnit[]> {
+  const { data, error } = await supabase
+    .from("inventory_units")
+    .select("*")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+  if (error) throw new Error("加载单位列表失败：" + error.message);
+  return (data ?? []) as InventoryUnit[];
+}
+
+/** 获取所有单位（含停用，用于设置页） */
+export async function fetchAllInventoryUnits(orgId: string): Promise<InventoryUnit[]> {
+  const { data, error } = await supabase
+    .from("inventory_units")
+    .select("*")
+    .eq("org_id", orgId)
+    .order("sort_order", { ascending: true });
+  if (error) throw new Error("加载单位列表失败：" + error.message);
+  return (data ?? []) as InventoryUnit[];
+}
+
+/** 创建单位，返回新 ID */
+export async function createInventoryUnit(orgId: string, name: string): Promise<string> {
+  const { data, error } = await supabase
+    .from("inventory_units")
+    .insert({ org_id: orgId, name, sort_order: 0 })
+    .select("id")
+    .single();
+  if (error) throw new Error("创建单位失败：" + error.message);
+  return data.id;
+}
+
+/** 删除单位 */
+export async function deleteInventoryUnit(id: string): Promise<void> {
+  const { error } = await supabase.from("inventory_units").delete().eq("id", id);
+  if (error) throw new Error("删除单位失败：" + error.message);
+}
+
+/** 切换单位启用状态 */
+export async function toggleInventoryUnit(id: string, isActive: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("inventory_units")
+    .update({ is_active: isActive })
+    .eq("id", id);
+  if (error) throw new Error("更新单位状态失败：" + error.message);
+}
+
