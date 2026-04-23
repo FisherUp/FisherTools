@@ -10,6 +10,8 @@ export type AiParsedItem = {
   location: string;
   status: string;
   notes: string;
+  unit: string;
+  unit_price: number;
 };
 
 type Props = {
@@ -29,6 +31,9 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
   const recognizerRef = useRef<any>(null);
   const sdkRef = useRef<typeof import("microsoft-cognitiveservices-speech-sdk") | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
   // Lazy load Speech SDK
   const loadSdk = useCallback(async () => {
@@ -157,16 +162,66 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
     }
   };
 
+  // ─── 图片识别 ───
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError("");
+    setParsing(true);
+    setParsedItems([]);
+
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]); // strip "data:xxx;base64," prefix
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      setImagePreview(URL.createObjectURL(file));
+
+      const res = await fetch("/api/inventory/ai-parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, imageMimeType: file.type }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "图片解析失败");
+      }
+
+      const data = await res.json();
+      const items: AiParsedItem[] = data.items ?? [];
+
+      if (items.length === 0) {
+        setError("AI 未能从图片中识别出物资信息，请重试");
+      } else {
+        setParsedItems(items);
+      }
+    } catch (e: any) {
+      setError(e.message || "图片 AI 解析失败");
+    } finally {
+      setParsing(false);
+      // 重置以允许再次选择同一文件
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
   // ─── 应用到表单 ───
   const handleApplyItem = (item: AiParsedItem) => {
     onApply(item, inputText);
-    setExpanded(false);
+    // 不折叠面板，让用户可以继续处理剩余解析结果
   };
 
   const handleApplyAll = () => {
     if (onBatchApply && parsedItems.length > 0) {
       onBatchApply(parsedItems, inputText);
-      setExpanded(false);
+      setExpanded(false); // 批量加入队列后折叠面板
     }
   };
 
@@ -200,8 +255,17 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
       {expanded && (
         <div style={{ padding: 14, background: "#fafbfc" }}>
-          {/* 语音 + 文字输入 */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          {/* 隐藏文件输入 */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleImageSelect}
+          />
+
+          {/* 语音 + 拍照 + 文字输入 */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <button
               type="button"
               onClick={recording ? stopRecording : startRecording}
@@ -219,6 +283,25 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
               }}
             >
               {recording ? "⏹ 停止录音" : "🎤 语音输入"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={parsing}
+              style={{
+                padding: "8px 14px",
+                background: "#6f42c1",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: parsing ? "not-allowed" : "pointer",
+                fontWeight: 600,
+                minWidth: 100,
+                opacity: parsing ? 0.6 : 1,
+              }}
+            >
+              📷 拍照识别
             </button>
 
             <button
@@ -267,6 +350,24 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
             💡 支持一次描述多个物资，AI 会自动拆分并识别分类
           </div>
 
+          {/* 图片预览 */}
+          {imagePreview && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <img
+                src={imagePreview}
+                alt="图片预览"
+                style={{ maxHeight: 100, maxWidth: 160, borderRadius: 6, border: "1px solid #ddd", objectFit: "cover" }}
+              />
+              <button
+                type="button"
+                onClick={() => setImagePreview(null)}
+                style={{ fontSize: 12, color: "#666", background: "none", border: "none", cursor: "pointer" }}
+              >
+                ✕ 移除图片
+              </button>
+            </div>
+          )}
+
           {/* 错误信息 */}
           {error && (
             <div style={{ padding: 8, background: "#f8d7da", color: "#842029", borderRadius: 6, marginTop: 8, fontSize: 13 }}>
@@ -277,24 +378,24 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
           {/* 解析结果 */}
           {parsedItems.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>
-                📋 解析结果（{parsedItems.length} 项）
+              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <span>📋 解析结果（{parsedItems.length} 项）</span>
                 {parsedItems.length > 1 && onBatchApply && (
                   <button
                     type="button"
                     onClick={handleApplyAll}
                     style={{
-                      marginLeft: 12,
-                      padding: "4px 10px",
+                      padding: "4px 12px",
                       background: "#198754",
                       color: "#fff",
                       border: "none",
                       borderRadius: 4,
                       fontSize: 12,
                       cursor: "pointer",
+                      fontWeight: 600,
                     }}
                   >
-                    全部应用
+                    ✅ 全部加入批量队列
                   </button>
                 )}
               </div>
