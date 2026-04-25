@@ -24,6 +24,7 @@ import {
 } from "../../lib/services/inventoryService";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
 import { supabase } from "../../lib/supabaseClient";
+import LearnModal from "./LearnModal";
 
 type MemberMap = Map<string, string>;
 const PAGE_SIZE = 20;
@@ -41,6 +42,10 @@ export default function InventoryClient() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [role, setRole] = useState("");
+
+  // 学习模式
+  const [learnItem, setLearnItem] = useState<InventoryItem | null>(null);
+  const [learnAge, setLearnAge] = useState(7);
 
   // 筛选
   const [search, setSearch] = useState("");
@@ -114,6 +119,13 @@ export default function InventoryClient() {
     setFilterSubCategory("");
     setCurrentPage(1);
   };
+
+  // 学习年龄持久化
+  useEffect(() => {
+    const saved = localStorage.getItem("inventory_learn_age");
+    if (saved) { const p = parseInt(saved); if (p >= 3 && p <= 18) setLearnAge(p); }
+  }, []);
+  useEffect(() => { localStorage.setItem("inventory_learn_age", String(learnAge)); }, [learnAge]);
 
   // 筛选变化时重置分页
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,8 +362,19 @@ export default function InventoryClient() {
         </select>
       </div>
 
-      {/* 总价值范围筛选 */}
+      {/* 总价值范围筛选 + 学习年龄 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {/* 学习年龄设置 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", background: "#f0f7ff", border: "1px solid #cce0ff", borderRadius: 6 }}>
+          <span style={{ fontSize: 12, color: "#1a73e8", fontWeight: 600 }}>📚 学习年龄</span>
+          <input
+            type="number" min={3} max={18} value={learnAge}
+            onChange={(e) => { const v = parseInt(e.target.value); if (v >= 3 && v <= 18) setLearnAge(v); }}
+            style={{ width: 44, padding: "2px 6px", border: "1px solid #cce0ff", borderRadius: 4, fontSize: 13, textAlign: "center", background: "#fff" }}
+          />
+          <span style={{ fontSize: 12, color: "#555" }}>岁</span>
+        </div>
+        <div style={{ width: 1, height: 20, background: "#e0e0e0", margin: "0 2px" }} />
         <span style={{ fontSize: 13, color: "#666" }}>总价值范围：</span>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 13 }}>¥</span>
@@ -399,15 +422,13 @@ export default function InventoryClient() {
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>状态</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>录入人</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>最近修改</th>
-                  {isAdmin && (
-                    <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 60, textAlign: "center" }}>删除</th>
-                  )}
+                  <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 80, textAlign: "center" }}>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedItems.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 14 : 13} style={{ padding: 24, color: "#666", textAlign: "center" }}>
+                    <td colSpan={14} style={{ padding: 24, color: "#666", textAlign: "center" }}>
                       暂无物资记录
                     </td>
                   </tr>
@@ -497,19 +518,27 @@ export default function InventoryClient() {
                             </>
                           ) : <span style={{ color: "#ccc" }}>—</span>}
                         </td>
-                        {isAdmin && (
-                          <td style={{ padding: "6px 10px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}
-                            onClick={(e) => e.stopPropagation()}>
+                        <td style={{ padding: "6px 10px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}
+                          onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => setLearnItem(item)}
+                            title={`学习「${item.name}」`}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: "2px 4px" }}
+                          >
+                            📚
+                          </button>
+                          {isAdmin && (
                             <button
                               type="button"
                               onClick={(e) => handleDelete(item, e)}
                               title={`删除「${item.name}」`}
-                              style={{ background: "none", border: "none", cursor: "pointer", color: "#c00", fontSize: 16, padding: "2px 6px" }}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#c00", fontSize: 16, padding: "2px 4px", marginLeft: 2 }}
                             >
                               🗑
                             </button>
-                          </td>
-                        )}
+                          )}
+                        </td>
                       </tr>
                     );
                   })
@@ -543,6 +572,16 @@ export default function InventoryClient() {
             </div>
           )}
         </>
+      )}
+      
+      {/* 学习模态框 */}
+      {learnItem && (
+        <LearnModal
+          item={learnItem}
+          age={learnAge}
+          onClose={() => setLearnItem(null)}
+          onAgeChange={(a) => setLearnAge(a)}
+        />
       )}
     </div>
   );
