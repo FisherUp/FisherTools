@@ -28,9 +28,11 @@ export async function middleware(req: NextRequest) {
 
   const pathname = req.nextUrl.pathname;
 
-  // 1) 放行 Next 内部资源 / favicon / 其它静态
+  // 1) 放行 Next 内部资源 / API 路由 / favicon / 其它静态
+  //    API 路由有自己的 session 鉴权，不应被页面级路由守卫重定向
   if (
     pathname.startsWith("/_next") ||
+    pathname.startsWith("/api/") ||
     pathname.startsWith("/favicon.ico") ||
     pathname.startsWith("/robots.txt") ||
     pathname.startsWith("/sitemap.xml")
@@ -54,7 +56,7 @@ export async function middleware(req: NextRequest) {
         .eq("id", session.user.id)
         .single();
       const url = req.nextUrl.clone();
-      url.pathname = profile?.role === "inventory-edit" ? "/inventory" : "/transactions";
+      url.pathname = profile?.role === "inventory-edit" || profile?.role === "learner" ? "/inventory" : "/transactions";
       url.search = "";
       return NextResponse.redirect(url);
     }
@@ -69,14 +71,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 5) inventory-edit 角色：只允许访问 /inventory 及其子路由
+  // 5) inventory-edit / learner 角色：只允许访问 /inventory 及其子路由
   if (!pathname.startsWith("/inventory")) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("role")
       .eq("id", session.user.id)
       .single();
-    if (profile?.role === "inventory-edit") {
+    if (profile?.role === "inventory-edit" || profile?.role === "learner") {
       const url = req.nextUrl.clone();
       url.pathname = "/inventory";
       url.search = "";

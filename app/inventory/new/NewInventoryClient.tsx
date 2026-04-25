@@ -80,7 +80,7 @@ export default function NewInventoryClient() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchMsg, setBatchMsg] = useState("");
 
-  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit";
+  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit" || role === "learner";
   const LS_OWNER_KEY = "inventory_default_owner_id";
 
   // 一级分类列表
