@@ -73,7 +73,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [msg, setMsg] = useState("");
   const [imgMsg, setImgMsg] = useState("");
 
-  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit";
+  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit" || role === "learner";
   const isAdmin = role === "admin";
 
   // 一级/二级分类

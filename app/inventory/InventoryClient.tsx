@@ -59,8 +59,8 @@ export default function InventoryClient() {
   const [currentPage, setCurrentPage] = useState(1);
 
   const isAdmin = role === "admin";
-  const isInventoryEditOnly = role === "inventory-edit";
-  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit";
+  const isInventoryEditOnly = role === "inventory-edit" || role === "learner";
+  const canWrite = role === "admin" || role === "finance" || role === "inventory-edit" || role === "learner";
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -258,10 +258,16 @@ export default function InventoryClient() {
             ⬇ 导出 CSV
           </button>
           {isAdmin && (
-            <a href="/inventory/settings"
-              style={{ padding: "8px 12px", border: "1px solid #0366d6", color: "#0366d6", borderRadius: 6, textDecoration: "none" }}>
-              ⚙️ 类别/位置设置
-            </a>
+            <>
+              <a href="/inventory/settings"
+                style={{ padding: "8px 12px", border: "1px solid #0366d6", color: "#0366d6", borderRadius: 6, textDecoration: "none" }}>
+                ⚙️ 类别/位置设置
+              </a>
+              <a href="/profiles"
+                style={{ padding: "8px 12px", border: "1px solid #6f42c1", color: "#6f42c1", borderRadius: 6, textDecoration: "none" }}>
+                👤 用户权限
+              </a>
+            </>
           )}
           {!isInventoryEditOnly && (
             <>
