@@ -68,6 +68,7 @@ export default function ChatPanel({ item, age, language }: Props) {
   const wsRef = useRef<WebSocket | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const nextPlayRef = useRef(0);
+  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([]); // ← track for interruption
   const micStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -144,13 +145,38 @@ Always speak in English.`;
       const start = Math.max(now, nextPlayRef.current);
       src.start(start);
       nextPlayRef.current = start + buf.duration;
+      // Track this source so it can be stopped on interruption
+      scheduledSourcesRef.current.push(src);
+      src.onended = () => {
+        scheduledSourcesRef.current = scheduledSourcesRef.current.filter((s) => s !== src);
+      };
     } catch {
       // ignore transient audio errors
     }
   }, []);
 
+  // ── Cancel all pending/playing AI audio ─────────────────
+  const cancelAudio = useCallback(() => {
+    scheduledSourcesRef.current.forEach((src) => {
+      try { src.stop(); } catch { /* already stopped */ }
+    });
+    scheduledSourcesRef.current = [];
+    if (audioCtxRef.current) {
+      nextPlayRef.current = audioCtxRef.current.currentTime;
+    }
+    setIsAiSpeaking(false);
+    // Also clear accumulating AI message so next response starts fresh
+    currentAiTextRef.current = "";
+    currentAiMsgIdRef.current = "";
+  }, []);
+
   // ── Cleanup all resources ────────────────────────────────
   const cleanup = useCallback(() => {
+    // Stop all scheduled/playing AI audio immediately
+    scheduledSourcesRef.current.forEach((src) => {
+      try { src.stop(); } catch { /* already stopped */ }
+    });
+    scheduledSourcesRef.current = [];
     processorRef.current?.disconnect();
     sourceRef.current?.disconnect();
     gainRef.current?.disconnect();
@@ -224,9 +250,8 @@ Always speak in English.`;
 
         case "input_audio_buffer.speech_started": {
           setUserSpeaking(true);
-          // Interrupt AI playback queue immediately
-          nextPlayRef.current = ctx.currentTime;
-          setIsAiSpeaking(false);
+          // Immediately cancel all queued/playing AI audio to prevent overlap
+          cancelAudio();
           break;
         }
 
@@ -288,7 +313,7 @@ Always speak in English.`;
         }
       }
     },
-    [scheduleChunk, setupMicProcessor]
+    [scheduleChunk, setupMicProcessor, cancelAudio]
   );
 
   // ── Start session ────────────────────────────────────────

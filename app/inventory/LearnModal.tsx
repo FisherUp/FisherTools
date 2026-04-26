@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { InventoryItem } from "../../lib/services/inventoryService";
+import { InventoryItem, getSignedUrl } from "../../lib/services/inventoryService";
 import ChatPanel from "./ChatPanel";
 
 type LearnContent = {
@@ -34,6 +34,17 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
   const [speaking, setSpeaking] = useState(false);
   const [localAge, setLocalAge] = useState(age);
 
+  // Item photo
+  const [itemImageUrl, setItemImageUrl] = useState<string | null>(null);
+
+  // AI image generation
+  const [genPrompt, setGenPrompt] = useState("");
+  const [genImage, setGenImage] = useState<string | null>(null);
+  const [genLoading, setGenLoading] = useState(false);
+  const [genError, setGenError] = useState("");
+  const [genListening, setGenListening] = useState(false);
+  const genRecogRef = useRef<any>(null);
+
   const synthRef = useRef<any>(null);
   const sdkRef = useRef<any>(null);
 
@@ -45,7 +56,21 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
     setSpeaking(false);
   }, []);
 
-  useEffect(() => () => stopSpeaking(), [stopSpeaking]);
+  const stopListening = useCallback(() => {
+    if (genRecogRef.current) {
+      try { genRecogRef.current.stopContinuousRecognitionAsync(); } catch {}
+      genRecogRef.current = null;
+    }
+    setGenListening(false);
+  }, []);
+
+  useEffect(() => () => { stopSpeaking(); stopListening(); }, [stopSpeaking, stopListening]);
+
+  // Load item photo (signed URL)
+  useEffect(() => {
+    if (!item.image_path) { setItemImageUrl(null); return; }
+    getSignedUrl(item.image_path).then((url) => setItemImageUrl(url ?? null));
+  }, [item.image_path]);
 
   // Close on Escape key
   useEffect(() => {
@@ -108,6 +133,66 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
       setLocalAge(v);
       onAgeChange(v);
       fetchContent(language, variant, v);
+    }
+  };
+
+  // Voice input for image generation
+  const handleGenVoice = async () => {
+    if (genListening) { stopListening(); return; }
+    try {
+      const tokenRes = await fetch("/api/inventory/speech-token");
+      if (!tokenRes.ok) throw new Error("获取语音 token 失败");
+      const { token, region } = await tokenRes.json();
+      if (!sdkRef.current) sdkRef.current = await import("microsoft-cognitiveservices-speech-sdk");
+      const sdk = sdkRef.current;
+      const speechConfig = sdk.SpeechConfig.fromAuthorizationToken(token, region);
+      speechConfig.speechRecognitionLanguage = language === "zh" ? "zh-CN" : "en-US";
+      const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
+      const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+      genRecogRef.current = recognizer;
+      setGenListening(true);
+      setGenError("");
+      recognizer.recognized = (_: any, e: any) => {
+        if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
+          const txt = e.result.text?.replace(/[。，？！,.?!]+$/, "");
+          if (txt) setGenPrompt((prev) => (prev ? prev + " " + txt : txt));
+        }
+      };
+      recognizer.sessionStopped = () => { setGenListening(false); genRecogRef.current = null; };
+      recognizer.canceled = () => { setGenListening(false); genRecogRef.current = null; };
+      recognizer.startContinuousRecognitionAsync();
+    } catch (e: any) {
+      setGenError(e.message || "语音识别失败");
+    }
+  };
+
+  // Generate scene image
+  const handleGenImage = async () => {
+    if (!genPrompt.trim()) { setGenError("请先描述一个场景"); return; }
+    stopListening();
+    setGenLoading(true);
+    setGenError("");
+    setGenImage(null);
+    try {
+      const ctx = [item.category, item.sub_category].filter(Boolean).join("/");
+      const res = await fetch("/api/inventory/imagine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_name: item.name,
+          item_context: ctx || undefined,
+          user_prompt: genPrompt,
+          language,
+          age: localAge,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "图片生成失败");
+      setGenImage(data.imageUrl);
+    } catch (e: any) {
+      setGenError(e.message || "图片生成失败，请重试");
+    } finally {
+      setGenLoading(false);
     }
   };
 
@@ -203,6 +288,22 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
               )}
             </div>
           </div>
+          {/* Item photo thumbnail */}
+          {itemImageUrl && (
+            <a href={itemImageUrl} target="_blank" rel="noreferrer" title="查看原图" style={{ flexShrink: 0 }}>
+              <img
+                src={itemImageUrl}
+                alt={item.name}
+                style={{
+                  width: 56, height: 56, objectFit: "cover",
+                  borderRadius: 10, border: "2px solid #e8f0fe",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                  cursor: "zoom-in",
+                }}
+                loading="lazy"
+              />
+            </a>
+          )}
           <button
             onClick={onClose}
             style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#aaa", padding: "0 6px", lineHeight: 1, flexShrink: 0 }}
@@ -374,6 +475,100 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
                   <div style={{ fontSize: 14, color: "#333", lineHeight: 1.75 }}>{content.question}</div>
                 </div>
               )}
+
+              {/* ── AI 场景图生成 ── */}
+              <div style={{ marginTop: 28, padding: "18px 20px", background: "linear-gradient(135deg,#fdf4ff,#f0f7ff)", borderRadius: 14, border: "1px solid #e0d7f7" }}>
+                <div style={{ fontWeight: 800, fontSize: 15, color: "#6d28d9", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                  🎨 {language === "zh" ? "生成场景图" : "Draw a Scene"}
+                </div>
+                <div style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>
+                  {language === "zh"
+                    ? `告诉 AI 你想看什么场景，它来画给你看！（如：「${item.name}在厨房里被用来做饭」）`
+                    : `Describe a scene and AI will draw it for you! (e.g. "A ${item.name} being used in a kitchen")`}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <input
+                    type="text"
+                    value={genPrompt}
+                    onChange={(e) => setGenPrompt(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !genLoading) handleGenImage(); }}
+                    placeholder={language === "zh" ? "用语音或文字描述场景…" : "Describe a scene..."}
+                    style={{
+                      flex: 1, padding: "9px 12px", border: "1px solid #d4b8f7", borderRadius: 8,
+                      fontSize: 14, outline: "none", background: "#fff",
+                    }}
+                    disabled={genLoading}
+                  />
+                  {/* Voice button */}
+                  <button
+                    onClick={handleGenVoice}
+                    disabled={genLoading}
+                    title={genListening ? "点击停止录音" : "点击开始语音描述"}
+                    style={{
+                      padding: "9px 14px", border: "none", borderRadius: 8, cursor: genLoading ? "not-allowed" : "pointer",
+                      background: genListening ? "#dc3545" : "#7c3aed",
+                      color: "#fff", fontSize: 18, flexShrink: 0,
+                      animation: genListening ? "cp-pulse 1.2s infinite" : "none",
+                    }}
+                  >
+                    {genListening ? "⏹" : "🎤"}
+                  </button>
+                </div>
+                <button
+                  onClick={handleGenImage}
+                  disabled={genLoading || !genPrompt.trim()}
+                  style={{
+                    width: "100%", padding: "10px 0", border: "none", borderRadius: 8,
+                    background: genLoading || !genPrompt.trim() ? "#c4b5fd" : "#7c3aed",
+                    color: "#fff", fontWeight: 700, fontSize: 14,
+                    cursor: genLoading || !genPrompt.trim() ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {genLoading ? "🖌 AI 正在作画…约需 15 秒" : "🎨 生成场景图"}
+                </button>
+                {genError && (
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: "#fff3cd", borderRadius: 8, color: "#856404", fontSize: 13 }}>
+                    ⚠️ {genError}
+                  </div>
+                )}
+                {genLoading && (
+                  <div style={{ marginTop: 14, textAlign: "center", color: "#7c3aed", fontSize: 13 }}>
+                    <div style={{ fontSize: 36, animation: "cp-bounce 1.2s infinite", display: "inline-block" }}>🖌️</div>
+                    <div style={{ marginTop: 6 }}>DALL·E 3 正在为你绘制场景…</div>
+                  </div>
+                )}
+                {genImage && !genLoading && (
+                  <div style={{ marginTop: 14, textAlign: "center" }}>
+                    <img
+                      src={genImage}
+                      alt="AI 生成场景图"
+                      style={{
+                        width: "100%", maxWidth: 480, borderRadius: 12,
+                        boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+                        border: "2px solid #e0d7f7",
+                      }}
+                      loading="lazy"
+                    />
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                      <a
+                        href={genImage}
+                        download="scene.png"
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ padding: "6px 14px", background: "#7c3aed", color: "#fff", borderRadius: 6, fontSize: 12, fontWeight: 600, textDecoration: "none" }}
+                      >
+                        ⬇ 保存图片
+                      </a>
+                      <button
+                        onClick={() => { setGenImage(null); setGenPrompt(""); }}
+                        style={{ padding: "6px 14px", border: "1px solid #d4b8f7", background: "#fff", color: "#6d28d9", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                      >
+                        🔄 重新生成
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
         </div>
