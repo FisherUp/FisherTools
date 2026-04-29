@@ -192,7 +192,7 @@ export default function BudgetsPage() {
   return (
     <div style={{ maxWidth: 980, margin: "40px auto", padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>年度预算管理</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>年度资源计划</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>

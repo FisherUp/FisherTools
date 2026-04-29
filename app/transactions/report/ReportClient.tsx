@@ -285,7 +285,7 @@ export default function ReportClient() {
 
     /* 收入 */
     const incTotal = incomeMonthly.reduce((a, b) => a + b, 0);
-    rows.push(["实收", "JH运营", "", "", ...MONTHS.map((m) => fy(incomeMonthly[m - 1])), fy(incTotal), ""]);
+    rows.push(["实收", "运营管理", "", "", ...MONTHS.map((m) => fy(incomeMonthly[m - 1])), fy(incTotal), ""]);    
 
     /* 支出 */
     for (const group of fundGroups) {
@@ -523,7 +523,7 @@ export default function ReportClient() {
               </tr>
               <tr>
                 <td style={{ ...tdStyle, textAlign: "left", fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1 }}>实收</td>
-                <td style={tdStyle}>JH运营</td>
+                <td style={tdStyle}>运营管理</td>
                 <td style={tdStyle}></td>
                 <td style={tdStyle}></td>
                 {MONTHS.map((m) => (
