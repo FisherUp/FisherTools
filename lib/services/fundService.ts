@@ -6,10 +6,10 @@ import { supabase } from "../supabaseClient";
 export type FundType = "mission" | "social_care" | "city" | "jh_operations";
 
 export const FUND_LABELS: Record<FundType, string> = {
-  mission: "宣教基金",
+  mission: "创启基金",
   social_care: "社会关怀基金",
   city: "城市基金",
-  jh_operations: "JH运营",
+  jh_operations: "运营管理",
 };
 
 export const FUND_RATIOS: Record<FundType, number> = {
@@ -56,7 +56,7 @@ export type FundBalanceSummary = {
   total_allocated: number;  // 划拨合计（分）
   total_income: number;     // 期初日期后收入合计（分）；仅 jh_operations 为非零，其余基金始终为 0
   total_expense: number;    // 该基金下支出合计（分）
-  balance: number;          // JH运营：total_allocated + total_income - total_expense
+  balance: number;          // 运营管理：total_allocated + total_income - total_expense
                             // 其他基金：total_allocated - total_expense
 };
 
@@ -65,9 +65,9 @@ export type AllocationSuggestion = {
   period_start: string;               // 建议计算期间起始日（日历半年起始）
   end_date: string;                   // 本次划拨截止日期
   total_income: number;               // 期间收入合计（分）
-  jh_expense: number;                 // 期间JH运营支出（分）——从分配池扮除
-  direct_fund_expense: number;        // 期间三基金直接支出（分）——不入JH池
-  net_amount: number;                 // 划拨基数 = 收入 - JH支出（分）
+  jh_expense: number;                 // 期间运营管理支出（分）——从分配池扶除
+  direct_fund_expense: number;        // 期间三基金直接支出（分）——不入收入池
+  net_amount: number;                 // 划拨基数 = 收入 - 运营管理支出（分）
   suggestions: Record<FundType, number>; // 各基金建议划拨金额（分）
 };
 
@@ -126,11 +126,11 @@ export function getHalfYearPeriodStart(endDate: string): string {
 }
 
 // -------------------------------------------------------
-// 计算某段时间内的JH运营净收入，用于划拨建议基数
+// 计算某段时间内的运营管理净收入，用于划拨建议基数
 //
 // 业务规则：
-//   分配基数 = 全部收入 − JH运营支出(fund_type='jh_operations')
-//   三个基金的直接支出不进入JH池，不影响划拨基数
+//   分配基数 = 全部收入 − 运营管理支出(fund_type='jh_operations')
+//   三个基金的直接支出不进入收入池，不影响划拨基数
 //
 // startDate、endDate 均为 inclusive
 // -------------------------------------------------------
@@ -140,8 +140,8 @@ export async function fetchNetBetween(
   endDate: string
 ): Promise<{
   totalIncome: number;
-  jhExpense: number;          // JH运营支出（从分配基数扮除）
-  directFundExpense: number;  // 三基金直接支出（不入JH池）
+  jhExpense: number;          // 运营管理支出（从分配基数扶除）
+  directFundExpense: number;  // 三基金直接支出（不入收入池）
   net: number;                // = totalIncome - jhExpense
 }> {
   // 收入：所有收入流水（收入类别 fund_type = NULL）
@@ -155,7 +155,7 @@ export async function fetchNetBetween(
 
   if (incomeErr) throw new Error("查询期间收入失败：" + incomeErr.message);
 
-  // 支出：关联 categories 以区分 JH运营 vs 三基金直接支出
+  // 支出：关联 categories 以区分运营管理 vs 三基金直接支出
   const { data: expData, error: expErr } = await supabase
     .from("transactions")
     .select("amount, categories!inner(fund_type)")
@@ -205,7 +205,7 @@ export async function fetchAllocationSuggestion(
 
   const result = await fetchNetBetween(orgId, periodStart, endDate);
 
-  // 划拨基数 = 收入 - JH运营支出（三基金直接支出不入池）
+  // 划拨基数 = 收入 - 运营管理支出（三基金直接支出不入收入池）
   const positiveNet = Math.max(0, result.net); // 净余额为负时建议为0
 
   const suggestions: Record<FundType, number> = {
@@ -272,8 +272,8 @@ export async function fetchFundBalances(
   const { data: txData, error: txErr } = await txQuery;
   if (txErr) throw new Error("读取支出数据失败：" + txErr.message);
 
-  // 3. 查询期初日期后的全部收入（用于 JH运萧余额计算）
-  // 业务规则：收入均流入 JH运萧，半年划拨时再按比例分配给各基金。未分配前收入应属于 JH运萧余额的一部分。
+  // 3. 查询期初日期后的全部收入（用于运营管理余额计算）
+  // 业务规则：收入均流入运营管理收入池，半年划拨时再按比例分配给各基金。未分配前收入应属于运营管理余额的一部分。
   let incomeQuery = supabase
     .from("transactions")
     .select("amount")

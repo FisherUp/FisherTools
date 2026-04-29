@@ -352,7 +352,7 @@ export default function FundsClient() {
     <div style={{ maxWidth: 1080, margin: "40px auto", padding: 16 }}>
       {/* 标题栏 */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>🏦 基金管理</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>🏦 资源池</h1>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
           <a href="/categories" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}>
             类别管理
@@ -407,7 +407,7 @@ export default function FundsClient() {
             borderRadius: 6,
           }}
         >
-          💡 <strong>基金归属规则</strong>：所有收入归入 JH 总收入池，每半年由管理员按比例划拨（宣教 50% / 社会关抅20% / 城幵20% / JH运营 10%）。支出通过「类别」归属到对应基金。请在{" "}
+          💡 <strong>基金归属规则</strong>：所有收入归入总收入池，每半年由管理员按比例划拨（创启 50% / 社会关怀 20% / 城市 20% / 运营管理 10%）。支出通过「类别」归属到对应基金。请在{" "}
           <a href="/categories" style={{ color: "#0070f3" }}>类别管理</a> 中为每个支出类别设置基金归属。
         </div>
       </section>
@@ -654,15 +654,15 @@ export default function FundsClient() {
                       期间收入合计：<strong>{fmtYuan(suggestion.total_income)}</strong>
                     </span>
                     <span>
-                      JH运营支出：<strong>{fmtYuan(suggestion.jh_expense)}</strong>
+                      运营管理支出：<strong>{fmtYuan(suggestion.jh_expense)}</strong>
                     </span>
                     <span>
                       三基金直接支出：
                       <strong>{fmtYuan(suggestion.direct_fund_expense)}</strong>
-                      <span style={{ fontSize: 11, color: "#888", marginLeft: 4 }}>（不入JH池）</span>
+                      <span style={{ fontSize: 11, color: "#888", marginLeft: 4 }}>（不入收入池）</span>
                     </span>
                     <span style={{ color: suggestion.net_amount >= 0 ? "#276749" : "#c00" }}>
-                      JH池净余额（划拨基数）：<strong>{fmtYuan(suggestion.net_amount)}</strong>
+                      净余额（划拨基数）：<strong>{fmtYuan(suggestion.net_amount)}</strong>
                       {suggestion.net_amount < 0 && "（净亏损，建议金额置为0）"}
                     </span>
                   </div>
@@ -803,7 +803,7 @@ export default function FundsClient() {
                   类型
                 </th>
                 <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid #eee", color: FUND_COLORS.mission.text, whiteSpace: "nowrap" }}>
-                  宣教基金（50%）
+                  创启基金（50%）
                 </th>
                 <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid #eee", color: FUND_COLORS.social_care.text, whiteSpace: "nowrap" }}>
                   社会关怀（20%）
@@ -812,7 +812,7 @@ export default function FundsClient() {
                   城市基金（20%）
                 </th>
                 <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid #eee", color: FUND_COLORS.jh_operations.text, whiteSpace: "nowrap" }}>
-                  JH运营（10%）
+                  运营管理（10%）
                 </th>
                 <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>
                   合计

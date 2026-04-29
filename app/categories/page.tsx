@@ -216,7 +216,7 @@ export default function CategoriesPage() {
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <a href="/funds" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
-            🏦 基金管理
+            🏦 资源池
           </a>
           <a href="/transactions" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             ← 返回流水

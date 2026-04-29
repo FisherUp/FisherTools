@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "财务管理系统",
+  title: "小馒头管理系统",
   description: "非盈利组织财务记录与报表",
 };
 

@@ -903,13 +903,13 @@ export default function TransactionsClient() {
 
           {userRole === "admin" && (
             <a href="/budgets" style={{ padding: "8px 12px", fontWeight: 700 }}>
-              预算管理
+              资源计划
             </a>
           )}
 
           {(userRole === "admin" || userRole === "viewer") && (
             <a href="/funds" style={{ padding: "8px 12px", fontWeight: 700 }}>
-              🏦 基金管理
+              🏦 资源池
             </a>
           )}
 

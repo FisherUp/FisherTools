@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 
 export default function LoginClient() {
-  const router = useRouter();
   const sp = useSearchParams();
   const redirectedFrom = sp.get("redirectedFrom") || "/transactions";
   const redirectedFromDecoded = decodeURIComponent(redirectedFrom);
@@ -22,9 +21,9 @@ export default function LoginClient() {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return setMsg("登录失败：" + error.message);
 
-      // ✅ 稳一点：登录成功后刷新路由状态
-      router.replace(redirectedFrom);
-      router.refresh();
+      // 硬跳转：确保浏览器发出全新请求、middleware 能读到 session cookie
+      // router.replace 是软导航，可能在 cookie 写入前发出请求导致被踢回 /login
+      window.location.replace(redirectedFromDecoded);
     } finally {
       setLoading(false);
     }
