@@ -756,3 +756,70 @@ export async function toggleInventoryUnit(id: string, isActive: boolean): Promis
   if (error) throw new Error("更新单位状态失败：" + error.message);
 }
 
+// ─── 学习会话记录 ───
+
+export type LearnStats = {
+  zh_sessions: number;  // 中文学习次数
+  zh_seconds: number;   // 中文学习总秒数
+  en_sessions: number;  // 英文学习次数
+  en_seconds: number;   // 英文学习总秒数
+};
+
+/**
+ * 记录一次 ≥90 秒的学习会话（朗读或小胖对话）。
+ * 静默失败（仅 console.error），不阻断主流程。
+ */
+export async function logLearnSession(params: {
+  orgId: string;
+  itemId: string;
+  userId: string;
+  language: "zh" | "en";
+  sessionType: "read" | "chat";
+  durationSeconds: number;
+}): Promise<void> {
+  const { error } = await supabase.from("item_learn_logs").insert({
+    org_id: params.orgId,
+    item_id: params.itemId,
+    user_id: params.userId,
+    language: params.language,
+    session_type: params.sessionType,
+    duration_seconds: params.durationSeconds,
+  });
+  if (error) console.error("logLearnSession error:", error.message);
+}
+
+/**
+ * 拉取组织内所有物资的学习统计（按 item_id 聚合）。
+ * 返回 Map<itemId, LearnStats>；无记录的 item 不出现在 Map 中。
+ */
+export async function fetchLearnStatsByOrg(orgId: string): Promise<Map<string, LearnStats>> {
+  const { data, error } = await supabase
+    .from("item_learn_logs")
+    .select("item_id, language, duration_seconds")
+    .eq("org_id", orgId);
+
+  const map = new Map<string, LearnStats>();
+  if (error || !data) return map;
+
+  for (const row of data) {
+    const s = map.get(row.item_id) ?? { zh_sessions: 0, zh_seconds: 0, en_sessions: 0, en_seconds: 0 };
+    if (row.language === "zh") {
+      s.zh_sessions += 1;
+      s.zh_seconds += row.duration_seconds;
+    } else {
+      s.en_sessions += 1;
+      s.en_seconds += row.duration_seconds;
+    }
+    map.set(row.item_id, s);
+  }
+  return map;
+}
+
+/** 格式化学习时长（秒 → 显示文字） */
+export function fmtLearnTime(seconds: number): string {
+  if (seconds <= 0) return "0分";
+  if (seconds < 60) return "< 1分";
+  const mins = Math.round(seconds / 60);
+  return `${mins}分`;
+}
+

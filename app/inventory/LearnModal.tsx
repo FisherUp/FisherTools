@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { InventoryItem, getSignedUrl } from "../../lib/services/inventoryService";
+import { InventoryItem, getSignedUrl, logLearnSession } from "../../lib/services/inventoryService";
 import ChatPanel from "./ChatPanel";
 
 type LearnContent = {
@@ -20,11 +20,15 @@ type LearnContent = {
 type Props = {
   item: InventoryItem;
   age: number;
+  orgId: string;
+  userId: string;
   onClose: () => void;
   onAgeChange: (age: number) => void;
+  /** 每次 ≥90s 学习完成后触发（用于列表页即时更新统计） */
+  onSessionLogged?: (itemId: string, lang: "zh" | "en", durationSeconds: number) => void;
 };
 
-export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
+export default function LearnModal({ item, age, orgId, userId, onClose, onAgeChange, onSessionLogged }: Props) {
   const [activeTab, setActiveTab] = useState<"learn" | "chat">("learn");
   const [language, setLanguage] = useState<"zh" | "en">("zh");
   const [content, setContent] = useState<LearnContent | null>(null);
@@ -47,6 +51,35 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
 
   const synthRef = useRef<any>(null);
   const sdkRef = useRef<any>(null);
+
+  // ── Reading (TTS) session timer ───────────────────────────────
+  const readStartRef = useRef<number | null>(null);
+
+  // Track reading duration: when speaking goes true→false, log if ≥90s
+  useEffect(() => {
+    if (speaking) {
+      readStartRef.current = Date.now();
+    } else if (readStartRef.current !== null) {
+      const dur = Math.round((Date.now() - readStartRef.current) / 1000);
+      readStartRef.current = null;
+      if (dur >= 90) {
+        logLearnSession({ orgId, itemId: item.id, userId, language, sessionType: "read", durationSeconds: dur })
+          .then(() => { onSessionLogged?.(item.id, language, dur); })
+          .catch(() => {});
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speaking]);
+
+  // ── Chat session end callback (from ChatPanel) ───────────────────
+  const handleChatSessionEnd = useCallback((durationSeconds: number) => {
+    if (durationSeconds >= 90) {
+      logLearnSession({ orgId, itemId: item.id, userId, language, sessionType: "chat", durationSeconds })
+        .then(() => { onSessionLogged?.(item.id, language, durationSeconds); })
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, item.id, userId, language]);
 
   const stopSpeaking = useCallback(() => {
     if (synthRef.current) {
@@ -383,7 +416,7 @@ export default function LearnModal({ item, age, onClose, onAgeChange }: Props) {
         {/* ── Content area ── */}
         {activeTab === "chat" ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <ChatPanel item={item} age={localAge} language={language} />
+            <ChatPanel item={item} age={localAge} language={language} onSessionEnd={handleChatSessionEnd} />
           </div>
         ) : (
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
