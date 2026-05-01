@@ -186,7 +186,8 @@ ${categoryDescription}
         ],
         temperature: 0.1,
         max_tokens: 2000,
-        response_format: { type: "json_object" },
+        // 视觉模式（含图片）时，Azure 不支持 response_format 参数
+        ...(imageBase64 ? {} : { response_format: { type: "json_object" } }),
       }),
     });
 
@@ -202,14 +203,31 @@ ${categoryDescription}
     const aiData = await aiRes.json();
     const content = aiData.choices?.[0]?.message?.content ?? "";
 
+    // 提取 JSON：去除 markdown 代码块标记（视觉模式可能包含）
+    const stripped = content
+      .replace(/^```(?:json)?\s*/m, "")
+      .replace(/\s*```\s*$/m, "")
+      .trim();
+
     let parsed: any;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(stripped);
     } catch {
-      return NextResponse.json(
-        { error: "AI 返回格式异常", raw: content },
-        { status: 502 }
-      );
+      // 尝试从文本中提取第一个 JSON 对象
+      const match = stripped.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          parsed = JSON.parse(match[0]);
+        } catch {
+          /* fallthrough */
+        }
+      }
+      if (!parsed) {
+        return NextResponse.json(
+          { error: "AI 返回格式异常", raw: content },
+          { status: 502 }
+        );
+      }
     }
 
     return NextResponse.json({

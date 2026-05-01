@@ -189,6 +189,25 @@ export async function fetchInventoryItem(id: string): Promise<InventoryItem> {
   return data as InventoryItem;
 }
 
+/** 获取物资 ID+名称列表（轻量，用于编辑页上/下一项导航）
+ *  按 created_at 正序排列，保存物资不会改变其在导航列表中的位置。
+ */
+export async function fetchInventoryItemIdList(
+  orgId: string
+): Promise<{ id: string; name: string }[]> {
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("id, name")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.warn("加载物资列表失败：", error.message);
+    return [];
+  }
+  return (data ?? []) as { id: string; name: string }[];
+}
+
 /** 创建物资，返回新 ID */
 export async function createInventoryItem(
   item: Pick<InventoryItem, "org_id" | "name" | "category" | "sub_category" | "owner_id" | "quantity" | "unit" | "unit_price" | "location" | "status" | "notes">

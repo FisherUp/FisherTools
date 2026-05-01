@@ -7,6 +7,7 @@ import {
   InventoryLocation,
   getMyProfile,
   fetchInventoryItem,
+  fetchInventoryItemIdList,
   updateInventoryItem,
   deleteInventoryItem,
   uploadInventoryImage,
@@ -62,6 +63,12 @@ export default function EditInventoryClient({ id }: { id: string }) {
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [imageSignedUrl, setImageSignedUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // 图片旋转（前端预览角度，0/90/180/270）
+  const [previewRotation, setPreviewRotation] = useState(0);
+  const [savingRotation, setSavingRotation] = useState(false);
+
+  // 上下一项导航
+  const [itemIdList, setItemIdList] = useState<{ id: string; name: string }[]>([]);
 
   // 审计字段
   const [createdBy, setCreatedBy] = useState<string | null>(null);
@@ -117,13 +124,14 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setOrgId(profile.orgId);
         setRole(profile.role);
 
-        const [item, memberList, memberMap, cats, locs, units] = await Promise.all([
+        const [item, memberList, memberMap, cats, locs, units, idList] = await Promise.all([
           fetchInventoryItem(id),
           fetchMembers(profile.orgId),
           fetchAllMembers(profile.orgId),
           fetchInventoryCategories(profile.orgId),
           fetchInventoryLocations(profile.orgId),
           fetchInventoryUnits(profile.orgId),
+          fetchInventoryItemIdList(profile.orgId),
         ]);
 
         setMembers(memberList);
@@ -131,6 +139,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setAllCategories(cats);
         setLocationOptions(locs);
         setUnitOptions(units);
+        setItemIdList(idList);
 
         // 如果当前 owner_id 不在活跃成员中，也加进下拉
         if (item.owner_id && !memberList.some((m) => m.id === item.owner_id)) {
@@ -155,6 +164,7 @@ export default function EditInventoryClient({ id }: { id: string }) {
         setUpdatedBy(item.updated_by);
         setCreatedAt(item.created_at);
         setUpdatedAt(item.updated_at);
+        setPreviewRotation(0);
 
         // 保存原始数据用于变更对比
         setOriginalItem(item);
@@ -297,6 +307,55 @@ export default function EditInventoryClient({ id }: { id: string }) {
   };
 
   // 删除物资
+  // 保存图片旋转：用 canvas 实际旋转后重新上传
+  const handleSaveRotation = async () => {
+    if (!imageSignedUrl || !imagePath || previewRotation === 0) return;
+    setSavingRotation(true);
+    setImgMsg("");
+    try {
+      // 通过 fetch 拿到 blob，绕开 canvas CORS 限制
+      const resp = await fetch(imageSignedUrl);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const img = new Image();
+      img.src = blobUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+      });
+      URL.revokeObjectURL(blobUrl);
+
+      const deg = previewRotation;
+      const isOrtho = deg === 90 || deg === 270;
+      const canvas = document.createElement("canvas");
+      canvas.width = isOrtho ? img.height : img.width;
+      canvas.height = isOrtho ? img.width : img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((deg * Math.PI) / 180);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+
+      const rotatedBlob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("图片导出失败"))), "image/jpeg", 0.9)
+      );
+      const rotatedFile = new File([rotatedBlob], "rotated.jpg", { type: "image/jpeg" });
+
+      // 删旧图，上传新图
+      await deleteInventoryImage(imagePath);
+      const newPath = await uploadInventoryImage(orgId, id, rotatedFile);
+      await updateInventoryItem(id, { image_path: newPath });
+      setImagePath(newPath);
+      await loadImageUrl(newPath);
+      setPreviewRotation(0);
+      setImgMsg("✅ 图片方向已保存");
+    } catch (e: any) {
+      setImgMsg("旋转保存失败：" + (e?.message ?? e));
+    } finally {
+      setSavingRotation(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!isAdmin) return setMsg("仅管理员可删除物资。");
 
@@ -325,13 +384,18 @@ export default function EditInventoryClient({ id }: { id: string }) {
     }
   };
 
+  // 上下一项导航计算
+  const currentIndex = itemIdList.findIndex((it) => it.id === id);
+  const prevItem = currentIndex > 0 ? itemIdList[currentIndex - 1] : null;
+  const nextItem = currentIndex < itemIdList.length - 1 ? itemIdList[currentIndex + 1] : null;
+
   return (
     <div style={{ maxWidth: 920, margin: "40px auto", padding: 16 }}>
       {/* 头部 */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>编辑物资</h1>
 
-        <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
           <a href="/inventory" style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6 }}>
             ← 返回列表
           </a>
@@ -501,13 +565,64 @@ export default function EditInventoryClient({ id }: { id: string }) {
           />
         </label>
 
-        <button
-          type="submit"
-          disabled={loading || !canWrite}
-          style={{ padding: "10px 16px", fontWeight: 700, marginTop: 8 }}
-        >
-          {loading ? "保存中…" : "保存"}
-        </button>
+        {/* 上一项 / 保存 / 下一项 三列布局 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+          {prevItem ? (
+            <a
+              href={`/inventory/${prevItem.id}/edit`}
+              title={`上一项：${prevItem.name}`}
+              style={{
+                flex: "0 0 auto",
+                padding: "10px 14px",
+                border: "1px solid #1a73e8",
+                color: "#1a73e8",
+                borderRadius: 6,
+                fontSize: 13,
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+                maxWidth: 140,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              ‹ {prevItem.name.length > 7 ? prevItem.name.slice(0, 7) + "…" : prevItem.name}
+            </a>
+          ) : (
+            <div style={{ flex: "0 0 auto", width: 40 }} />
+          )}
+
+          <button
+            type="submit"
+            disabled={loading || !canWrite}
+            style={{ flex: 1, padding: "10px 16px", fontWeight: 700 }}
+          >
+            {loading ? "保存中…" : "保存"}
+          </button>
+
+          {nextItem ? (
+            <a
+              href={`/inventory/${nextItem.id}/edit`}
+              title={`下一项：${nextItem.name}`}
+              style={{
+                flex: "0 0 auto",
+                padding: "10px 14px",
+                border: "1px solid #1a73e8",
+                color: "#1a73e8",
+                borderRadius: 6,
+                fontSize: 13,
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+                maxWidth: 140,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {nextItem.name.length > 7 ? nextItem.name.slice(0, 7) + "…" : nextItem.name} ›
+            </a>
+          ) : (
+            <div style={{ flex: "0 0 auto", width: 40 }} />
+          )}
+        </div>
       </form>
 
       {/* 图片管理 */}
@@ -519,22 +634,70 @@ export default function EditInventoryClient({ id }: { id: string }) {
       {/* 当前图片预览 */}
       {imageSignedUrl ? (
         <div style={{ marginTop: 8 }}>
-          <a href={imageSignedUrl} target="_blank" rel="noreferrer">
-            <img
-              src={imageSignedUrl}
-              alt={name}
-              style={{
-                maxWidth: 400,
-                maxHeight: 400,
-                objectFit: "contain",
-                borderRadius: 8,
-                border: "1px solid #eee",
-              }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).alt = "图片加载失败";
-              }}
-            />
-          </a>
+          {/* 图片（含旋转预览） */}
+          <div style={{ display: "inline-block", overflow: "hidden" }}>
+            <a href={imageSignedUrl} target="_blank" rel="noreferrer">
+              <img
+                src={imageSignedUrl}
+                alt={name}
+                style={{
+                  maxWidth: 400,
+                  maxHeight: 400,
+                  objectFit: "contain",
+                  borderRadius: 8,
+                  border: "1px solid #eee",
+                  transform: `rotate(${previewRotation}deg)`,
+                  transition: "transform 0.2s ease",
+                  display: "block",
+                }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).alt = "图片加载失败";
+                }}
+              />
+            </a>
+          </div>
+
+          {/* 旋转控制 */}
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, color: "#555" }}>📐 旋转：</span>
+            <button
+              type="button"
+              onClick={() => setPreviewRotation((r) => (r - 90 + 360) % 360)}
+              style={{ padding: "4px 10px", border: "1px solid #888", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 20 }}
+              title="逆时针 90°"
+            >
+              ↺
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreviewRotation((r) => (r + 90) % 360)}
+              style={{ padding: "4px 10px", border: "1px solid #888", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 20 }}
+              title="顺时针 90°"
+            >
+              ↻
+            </button>
+            {previewRotation !== 0 && (
+              <button
+                type="button"
+                onClick={handleSaveRotation}
+                disabled={savingRotation || uploading}
+                style={{ padding: "4px 12px", border: "1px solid #1a73e8", color: "#fff", background: savingRotation ? "#aaa" : "#1a73e8", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+              >
+                {savingRotation ? "保存中…" : "💾 保存旋转"}
+              </button>
+            )}
+            {previewRotation !== 0 && (
+              <button
+                type="button"
+                onClick={() => setPreviewRotation(0)}
+                disabled={savingRotation}
+                style={{ padding: "4px 10px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 13, color: "#888" }}
+              >
+                重置
+              </button>
+            )}
+          </div>
+
           <div style={{ marginTop: 8, display: "flex", gap: 10 }}>
             {canWrite && (
               <>
