@@ -35,6 +35,43 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
+  // ─── 图片压缩（Canvas 缩放 + JPEG 压缩） ───
+  const compressImage = useCallback(
+    (file: File, maxDim = 1600, quality = 0.85): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return reject(new Error("Canvas 不可用"));
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl.split(",")[1]);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("读取图片失败"));
+        };
+        img.src = url;
+      });
+    },
+    []
+  );
+
   // Lazy load Speech SDK
   const loadSdk = useCallback(async () => {
     if (sdkRef.current) return sdkRef.current;
@@ -142,12 +179,17 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
         body: JSON.stringify({ text }),
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "解析失败");
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`AI 服务响应异常 (HTTP ${res.status})`);
       }
 
-      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "解析失败");
+      }
+
       const items: AiParsedItem[] = data.items ?? [];
 
       if (items.length === 0) {
@@ -172,30 +214,28 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
     setParsedItems([]);
 
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(",")[1]); // strip "data:xxx;base64," prefix
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      // 压缩图片（最长边 1600px, JPEG 85%）以减小请求体
+      const base64 = await compressImage(file);
 
       setImagePreview(URL.createObjectURL(file));
 
       const res = await fetch("/api/inventory/ai-parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, imageMimeType: file.type }),
+        body: JSON.stringify({ imageBase64: base64, imageMimeType: "image/jpeg" }),
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "图片解析失败");
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`AI 服务响应异常 (HTTP ${res.status})`);
       }
 
-      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "图片解析失败");
+      }
+
       const items: AiParsedItem[] = data.items ?? [];
 
       if (items.length === 0) {
