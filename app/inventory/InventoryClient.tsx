@@ -90,21 +90,22 @@ export default function InventoryClient() {
         setLocationOptions(locs);
         setUnitOptions(units);
 
-        // 批量生成缩略图 signed URL
+        // 先渲染列表，再并行加载缩略图 URL 和审计显示名
         const paths = list.map((i) => i.image_path);
-        const urlMap = await batchGetSignedUrls(paths);
-        setImageUrlMap(urlMap);
-
-        // 加载录入人/修改人显示名
         const auditIds = Array.from(
           new Set(
             list.flatMap((i) => [i.created_by, i.updated_by]).filter(Boolean) as string[]
           )
         );
-        if (auditIds.length > 0) {
-          const displayMap = await fetchUserDisplayMap(auditIds, profile.orgId);
-          setUserDisplayMap(displayMap);
-        }
+
+        const [urlMap, displayMap] = await Promise.all([
+          batchGetSignedUrls(paths),
+          auditIds.length > 0
+            ? fetchUserDisplayMap(auditIds, profile.orgId)
+            : Promise.resolve(new Map<string, string>()),
+        ]);
+        setImageUrlMap(urlMap);
+        setUserDisplayMap(displayMap);
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
       } finally {

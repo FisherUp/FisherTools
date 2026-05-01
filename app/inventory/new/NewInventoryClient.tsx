@@ -299,10 +299,10 @@ export default function NewInventoryClient() {
       if (!Number.isFinite(qty) || qty < 1) return setBatchMsg(`第 ${i + 1} 件物资数量必须 ≥ 1`);
     }
     setBatchLoading(true);
-    let ok = 0;
-    const errs: string[] = [];
-    for (const it of batchItems) {
-      try {
+
+    // 并行创建所有物资
+    const results = await Promise.allSettled(
+      batchItems.map(async (it) => {
         const newId = await createInventoryItem({
           org_id: orgId,
           name: it.name.trim(),
@@ -316,16 +316,28 @@ export default function NewInventoryClient() {
           unit: it.unit || null,
           unit_price: it.unit_price ? parseInt(it.unit_price) : null,
         });
-        await logItemChanges(orgId, newId, "create", []);
-        try {
-          const logId = await createIntakeLog(orgId, it.rawInput, it.parsedResult, aiInputType || "text");
-          await confirmIntakeLog(logId, newId);
-        } catch {}
+        // 日志记录不阻塞主流程，并行执行
+        await Promise.allSettled([
+          logItemChanges(orgId, newId, "create", []),
+          createIntakeLog(orgId, it.rawInput, it.parsedResult, aiInputType || "text")
+            .then((logId) => confirmIntakeLog(logId, newId))
+            .catch(() => {}),
+        ]);
+        return { name: it.name, id: newId };
+      })
+    );
+
+    let ok = 0;
+    const errs: string[] = [];
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "fulfilled") {
         ok++;
-      } catch (e: any) {
-        errs.push(`「${it.name}」：${e?.message ?? e}`);
+      } else {
+        errs.push(`「${batchItems[i].name}」：${r.reason?.message ?? r.reason}`);
       }
     }
+
     setBatchLoading(false);
     if (errs.length === 0) {
       setBatchMsg(`✅ 全部 ${ok} 件物资已创建！正在跳转…`);

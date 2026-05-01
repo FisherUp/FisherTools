@@ -228,21 +228,76 @@ export async function deleteInventoryItem(id: string): Promise<void> {
 
 // ─── 图片操作 ───
 
-/** 上传图片到 inventory-images bucket，返回 storage path */
+/**
+ * 客户端图片压缩：缩放到 maxDim 以内、JPEG quality 压缩
+ * 返回压缩后的 File 对象
+ */
+export function compressImage(
+  file: File,
+  maxDim = 1200,
+  quality = 0.7
+): Promise<File> {
+  return new Promise((resolve, reject) => {
+    // 非图片直接返回原文件
+    if (!file.type.startsWith("image/")) return resolve(file);
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.width;
+      let h = img.height;
+      if (w <= maxDim && h <= maxDim && file.size <= 300 * 1024) {
+        // 已经很小，无需压缩
+        return resolve(file);
+      }
+      if (w > maxDim || h > maxDim) {
+        const ratio = Math.min(maxDim / w, maxDim / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) return reject(new Error("压缩失败"));
+          const compressed = new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
+            type: "image/jpeg",
+          });
+          resolve(compressed);
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file); // 解码失败则返回原文件
+    };
+    img.src = url;
+  });
+}
+
+/** 上传图片到 inventory-images bucket，返回 storage path（自动压缩） */
 export async function uploadInventoryImage(
   orgId: string,
   itemId: string,
   file: File
 ): Promise<string> {
-  if (file.size > MAX_FILE_SIZE) {
-    throw new Error(`文件 ${file.name} 超过 10MB（${(file.size / 1024 / 1024).toFixed(1)}MB），请压缩后再上传`);
+  // 先压缩
+  const compressed = await compressImage(file);
+  if (compressed.size > MAX_FILE_SIZE) {
+    throw new Error(`文件 ${file.name} 压缩后仍超过 10MB（${(compressed.size / 1024 / 1024).toFixed(1)}MB），请手动压缩后再上传`);
   }
 
   const safeName = file.name.replace(/[^\w.\-]+/g, "_");
   const storagePath = `${orgId}/${itemId}/${Date.now()}_${safeName}`;
 
-  const { error } = await supabase.storage.from(BUCKET).upload(storagePath, file, {
+  const { error } = await supabase.storage.from(BUCKET).upload(storagePath, compressed, {
     upsert: false,
+    contentType: compressed.type,
   });
 
   if (error) throw new Error("上传图片失败：" + error.message);
@@ -271,7 +326,7 @@ export async function getSignedUrl(storagePath: string): Promise<string | null> 
   return data.signedUrl;
 }
 
-/** 批量生成 signed URL（用于列表页缩略图） */
+/** 批量生成 signed URL（用于列表页缩略图）——使用 Supabase 批量接口，单次 HTTP */
 export async function batchGetSignedUrls(
   paths: (string | null)[]
 ): Promise<Map<string, string>> {
@@ -279,16 +334,18 @@ export async function batchGetSignedUrls(
   const validPaths = Array.from(new Set(paths.filter(Boolean) as string[]));
   if (validPaths.length === 0) return map;
 
-  const results = await Promise.allSettled(
-    validPaths.map(async (p) => {
-      const url = await getSignedUrl(p);
-      return { path: p, url };
-    })
-  );
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrls(validPaths, SIGNED_URL_TTL);
 
-  for (const r of results) {
-    if (r.status === "fulfilled" && r.value.url) {
-      map.set(r.value.path, r.value.url);
+  if (error) {
+    console.warn("批量生成签名 URL 失败：", error.message);
+    return map;
+  }
+
+  for (const item of data ?? []) {
+    if (item.signedUrl && item.path) {
+      map.set(item.path, item.signedUrl);
     }
   }
 
