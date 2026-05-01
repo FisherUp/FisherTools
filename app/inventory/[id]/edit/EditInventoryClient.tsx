@@ -159,15 +159,14 @@ export default function EditInventoryClient({ id }: { id: string }) {
         // 保存原始数据用于变更对比
         setOriginalItem(item);
 
-        // 加载用户显示名
+        // 并行加载用户显示名和图片（不阻塞主流程）
         const auditIds = [item.created_by, item.updated_by].filter(Boolean) as string[];
-        if (auditIds.length > 0) {
-          const displayMap = await fetchUserDisplayMap(auditIds, profile.orgId);
-          setUserDisplayMap(displayMap);
-        }
-
-        // 加载图片
-        await loadImageUrl(item.image_path);
+        await Promise.all([
+          auditIds.length > 0
+            ? fetchUserDisplayMap(auditIds, profile.orgId).then(setUserDisplayMap)
+            : Promise.resolve(),
+          loadImageUrl(item.image_path),
+        ]);
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
       } finally {
