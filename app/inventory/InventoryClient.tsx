@@ -6,6 +6,7 @@ import {
   InventoryCategory,
   InventoryLocation,
   InventoryUnit,
+  LearnStats,
   fetchInventoryItems,
   fetchAllMembers,
   fetchInventoryCategories,
@@ -20,7 +21,9 @@ import {
   getSubCategories,
   getCategoryDisplayText,
   fmtYuan,
+  fmtLearnTime,
   logItemChanges,
+  fetchLearnStatsByOrg,
 } from "../../lib/services/inventoryService";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
 import { supabase } from "../../lib/supabaseClient";
@@ -38,6 +41,8 @@ export default function InventoryClient() {
   const [locationOptions, setLocationOptions] = useState<InventoryLocation[]>([]);
   const [unitOptions, setUnitOptions] = useState<InventoryUnit[]>([]);
   const [orgId, setOrgId] = useState("");
+  const [userId, setUserId] = useState("");
+  const [learnStatsMap, setLearnStatsMap] = useState<Map<string, LearnStats>>(new Map());
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -75,6 +80,7 @@ export default function InventoryClient() {
         const profile = await getMyProfile();
         setRole(profile.role);
         setOrgId(profile.orgId);
+        setUserId(profile.userId);
 
         const [list, members, cats, locs, units] = await Promise.all([
           fetchInventoryItems(profile.orgId),
@@ -98,14 +104,16 @@ export default function InventoryClient() {
           )
         );
 
-        const [urlMap, displayMap] = await Promise.all([
+        const [urlMap, displayMap, learnStats] = await Promise.all([
           batchGetSignedUrls(paths),
           auditIds.length > 0
             ? fetchUserDisplayMap(auditIds, profile.orgId)
             : Promise.resolve(new Map<string, string>()),
+          fetchLearnStatsByOrg(profile.orgId),
         ]);
         setImageUrlMap(urlMap);
         setUserDisplayMap(displayMap);
+        setLearnStatsMap(learnStats);
       } catch (e: any) {
         setMsg(String(e?.message ?? e));
       } finally {
@@ -127,6 +135,19 @@ export default function InventoryClient() {
     if (saved) { const p = parseInt(saved); if (p >= 3 && p <= 18) setLearnAge(p); }
   }, []);
   useEffect(() => { localStorage.setItem("inventory_learn_age", String(learnAge)); }, [learnAge]);
+
+  // 学习会话记录后即时更新列表统计（不重新拉取 DB）
+  const handleLearnSessionLogged = useCallback((itemId: string, lang: "zh" | "en", dur: number) => {
+    setLearnStatsMap((prev) => {
+      const newMap = new Map(prev);
+      const s = newMap.get(itemId) ?? { zh_sessions: 0, zh_seconds: 0, en_sessions: 0, en_seconds: 0 };
+      const updated = { ...s };
+      if (lang === "zh") { updated.zh_sessions += 1; updated.zh_seconds += dur; }
+      else { updated.en_sessions += 1; updated.en_seconds += dur; }
+      newMap.set(itemId, updated);
+      return newMap;
+    });
+  }, []);
 
   // 筛选变化时重置分页
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -417,6 +438,7 @@ export default function InventoryClient() {
               <thead>
                 <tr style={{ background: "#fafafa" }}>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 46, textAlign: "center", color: "#888", fontSize: 12 }}>#</th>
+                  <th style={{ padding: "8px 4px", borderBottom: "1px solid #eee", width: 40, textAlign: "center", color: "#1a73e8", fontSize: 14 }} title="学习按鈕">📚</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 72 }}>图片</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>名称</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>类别</th>
@@ -429,13 +451,15 @@ export default function InventoryClient() {
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>状态</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>录入人</th>
                   <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", textAlign: "left" }}>最近修改</th>
-                  <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 80, textAlign: "center" }}>操作</th>
+                  <th style={{ padding: "8px 6px", borderBottom: "1px solid #eee", textAlign: "center", width: 76 }} title="中文学习次数和时长">🇨🇳学习</th>
+                  <th style={{ padding: "8px 6px", borderBottom: "1px solid #eee", textAlign: "center", width: 76 }} title="英文学习次数和时长">🇬🇧学习</th>
+                  <th style={{ padding: "8px 10px", borderBottom: "1px solid #eee", width: 72, textAlign: "center" }}>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedItems.length === 0 ? (
                   <tr>
-                    <td colSpan={14} style={{ padding: 24, color: "#666", textAlign: "center" }}>
+                    <td colSpan={17} style={{ padding: 24, color: "#666", textAlign: "center" }}>
                       暂无物资记录
                     </td>
                   </tr>
@@ -460,6 +484,18 @@ export default function InventoryClient() {
                       >
                         <td style={{ padding: "6px 10px", borderBottom: "1px solid #f0f0f0", textAlign: "center", color: "#aaa", fontSize: 12 }}>
                           {rowNum}
+                        </td>
+                        {/* ─ 学习按鈕（播前，不需滚到最后） ─ */}
+                        <td style={{ padding: "4px 4px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}
+                          onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => setLearnItem(item)}
+                            title={`学习「${item.name}」`}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, padding: "2px 2px", lineHeight: 1 }}
+                          >
+                            📚
+                          </button>
                         </td>
                         <td style={{ padding: 6, borderBottom: "1px solid #f0f0f0" }}>
                           {imgUrl ? (
@@ -525,22 +561,42 @@ export default function InventoryClient() {
                             </>
                           ) : <span style={{ color: "#ccc" }}>—</span>}
                         </td>
+                        {/* ─ 中文学习统计 ─ */}
+                        {(() => {
+                          const s = learnStatsMap.get(item.id);
+                          return (
+                            <td style={{ padding: "6px 6px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}>
+                              {s && s.zh_sessions > 0 ? (
+                                <div style={{ fontSize: 11, lineHeight: 1.5, color: "#333" }}>
+                                  <div style={{ fontWeight: 700 }}>{s.zh_sessions}次</div>
+                                  <div style={{ color: "#888" }}>{fmtLearnTime(s.zh_seconds)}</div>
+                                </div>
+                              ) : <span style={{ color: "#ddd", fontSize: 12 }}>—</span>}
+                            </td>
+                          );
+                        })()}
+                        {/* ─ 英文学习统计 ─ */}
+                        {(() => {
+                          const s = learnStatsMap.get(item.id);
+                          return (
+                            <td style={{ padding: "6px 6px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}>
+                              {s && s.en_sessions > 0 ? (
+                                <div style={{ fontSize: 11, lineHeight: 1.5, color: "#333" }}>
+                                  <div style={{ fontWeight: 700 }}>{s.en_sessions}次</div>
+                                  <div style={{ color: "#888" }}>{fmtLearnTime(s.en_seconds)}</div>
+                                </div>
+                              ) : <span style={{ color: "#ddd", fontSize: 12 }}>—</span>}
+                            </td>
+                          );
+                        })()}
                         <td style={{ padding: "6px 10px", borderBottom: "1px solid #f0f0f0", textAlign: "center" }}
                           onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => setLearnItem(item)}
-                            title={`学习「${item.name}」`}
-                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: "2px 4px" }}
-                          >
-                            📚
-                          </button>
                           {isAdmin && (
                             <button
                               type="button"
                               onClick={(e) => handleDelete(item, e)}
                               title={`删除「${item.name}」`}
-                              style={{ background: "none", border: "none", cursor: "pointer", color: "#c00", fontSize: 16, padding: "2px 4px", marginLeft: 2 }}
+                              style={{ background: "none", border: "none", cursor: "pointer", color: "#c00", fontSize: 16, padding: "2px 4px" }}
                             >
                               🗑
                             </button>
@@ -586,8 +642,11 @@ export default function InventoryClient() {
         <LearnModal
           item={learnItem}
           age={learnAge}
+          orgId={orgId}
+          userId={userId}
           onClose={() => setLearnItem(null)}
           onAgeChange={(a) => setLearnAge(a)}
+          onSessionLogged={handleLearnSessionLogged}
         />
       )}
     </div>

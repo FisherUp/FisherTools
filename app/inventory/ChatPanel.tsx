@@ -16,6 +16,8 @@ type Props = {
   item: InventoryItem;
   age: number;
   language: "zh" | "en";
+  /** 会话结束时回调（仅在有实际活跃时段时触发）；durationSeconds = 会话秒数 */
+  onSessionEnd?: (durationSeconds: number) => void;
 };
 
 // ── PCM16 / Base64 helpers ───────────────────────────────────
@@ -54,7 +56,7 @@ function b642ab(b64: string): ArrayBuffer {
 }
 
 // ── Component ────────────────────────────────────────────────
-export default function ChatPanel({ item, age, language }: Props) {
+export default function ChatPanel({ item, age, language, onSessionEnd }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -76,6 +78,9 @@ export default function ChatPanel({ item, age, language }: Props) {
   const currentAiTextRef = useRef("");
   const currentAiMsgIdRef = useRef("");
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  // ── Session timer for learning stats ────────────────────
+  const sessionStartRef = useRef<number | null>(null); // ms, set when status→ready
+  const sessionLoggedRef = useRef(false); // prevent double-report
 
   const setStatusBoth = (s: Status) => { setStatus(s); statusRef.current = s; };
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
@@ -170,6 +175,15 @@ Always speak in English.`;
     currentAiMsgIdRef.current = "";
   }, []);
 
+  // ── Report session duration to parent (once per session) ────────────────
+  const reportSession = useCallback(() => {
+    if (sessionLoggedRef.current || !sessionStartRef.current || !onSessionEnd) return;
+    sessionLoggedRef.current = true;
+    const dur = Math.round((Date.now() - sessionStartRef.current) / 1000);
+    if (dur > 0) onSessionEnd(dur);
+    sessionStartRef.current = null;
+  }, [onSessionEnd]);
+
   // ── Cleanup all resources ────────────────────────────────
   const cleanup = useCallback(() => {
     // Stop all scheduled/playing AI audio immediately
@@ -243,6 +257,9 @@ Always speak in English.`;
         case "session.updated": {
           setStatusBoth("ready");
           setupMicProcessor(ctx, micStreamRef.current!, ws);
+          // Start session timer for learning stats
+          sessionStartRef.current = Date.now();
+          sessionLoggedRef.current = false;
           // Prompt AI to greet first
           ws.send(JSON.stringify({ type: "response.create" }));
           break;
@@ -323,6 +340,8 @@ Always speak in English.`;
     setMsgs([]);
     currentAiTextRef.current = "";
     currentAiMsgIdRef.current = "";
+    sessionStartRef.current = null;
+    sessionLoggedRef.current = false;
 
     try {
       // 1. Fetch credentials
@@ -365,7 +384,8 @@ Always speak in English.`;
               voice: "shimmer",
               input_audio_format: "pcm16",
               output_audio_format: "pcm16",
-              input_audio_transcription: { model: "whisper-1" },
+              // language 字段告诉 Whisper 用正确语言转写，防止中文被识别为英文或繁体
+              input_audio_transcription: { model: "whisper-1", language: language === "zh" ? "zh" : "en" },
               turn_detection: {
                 type: "server_vad",
                 threshold: 0.5,
@@ -392,6 +412,8 @@ Always speak in English.`;
       };
 
       ws.onclose = (e) => {
+        // Report session before state changes
+        reportSession();
         if (e.code !== 1000 && statusRef.current === "ready") {
           setError(`连接已断开 (${e.code})，请重新开始`);
           setStatusBoth("error");
@@ -408,10 +430,11 @@ Always speak in English.`;
   }, [buildSystemPrompt, cleanup, handleWsMessage]);
 
   const stopSession = useCallback(() => {
+    reportSession(); // report before cleanup closes ws (which also triggers onclose)
     cleanup();
     setStatusBoth("idle");
     setError("");
-  }, [cleanup]);
+  }, [cleanup, reportSession]);
 
   // ── Render helpers ───────────────────────────────────────
   const statusColor = status === "ready" ? "#22863a" : status === "connecting" ? "#e6a817" : status === "error" ? "#d73a49" : "#888";
