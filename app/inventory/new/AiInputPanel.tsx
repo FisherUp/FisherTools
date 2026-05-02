@@ -15,8 +15,8 @@ export type AiParsedItem = {
 };
 
 type Props = {
-  onApply: (item: AiParsedItem, rawInput: string) => void;
-  onBatchApply?: (items: AiParsedItem[], rawInput: string) => void;
+  onApply: (item: AiParsedItem, rawInput: string, imageFile?: File) => void;
+  onBatchApply?: (items: AiParsedItem[], rawInput: string, imageFile?: File) => void;
   disabled?: boolean;
 };
 
@@ -34,6 +34,7 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [capturedImageFile, setCapturedImageFile] = useState<File | null>(null);
 
   // ─── 图片压缩（Canvas 缩放 + JPEG 压缩） ───
   const compressImage = useCallback(
@@ -209,6 +210,7 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setCapturedImageFile(file); // 保留原始文件，用于提交时上传存储
     setError("");
     setParsing(true);
     setParsedItems([]);
@@ -254,13 +256,13 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
   // ─── 应用到表单 ───
   const handleApplyItem = (item: AiParsedItem) => {
-    onApply(item, inputText);
+    onApply(item, inputText, capturedImageFile || undefined);
     // 不折叠面板，让用户可以继续处理剩余解析结果
   };
 
   const handleApplyAll = () => {
     if (onBatchApply && parsedItems.length > 0) {
-      onBatchApply(parsedItems, inputText);
+      onBatchApply(parsedItems, inputText, capturedImageFile || undefined);
       setExpanded(false); // 批量加入队列后折叠面板
     }
   };
@@ -400,7 +402,7 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
               />
               <button
                 type="button"
-                onClick={() => setImagePreview(null)}
+                onClick={() => { setImagePreview(null); setCapturedImageFile(null); }}
                 style={{ fontSize: 12, color: "#666", background: "none", border: "none", cursor: "pointer" }}
               >
                 ✕ 移除图片

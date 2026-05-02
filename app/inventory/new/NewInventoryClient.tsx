@@ -23,6 +23,7 @@ import {
   createIntakeLog,
   confirmIntakeLog,
   fmtYuan,
+  createInventoryLocation,
 } from "../../../lib/services/inventoryService";
 import AiInputPanel, { AiParsedItem } from "./AiInputPanel";
 
@@ -41,6 +42,7 @@ type BatchItem = {
   unit_price: string;
   rawInput: string;
   parsedResult: AiParsedItem;
+  imageFile?: File; // 拍照识别时拍摄的原始照片
 };
 
 export default function NewInventoryClient() {
@@ -141,18 +143,30 @@ export default function NewInventoryClient() {
   };
 
   // AI 解析结果填入表单
-  const handleAiApply = useCallback((item: AiParsedItem, rawInput: string) => {
+  const handleAiApply = useCallback(async (item: AiParsedItem, rawInput: string, photoFile?: File) => {
     setName(item.name || "");
     setQuantity(String(item.quantity || 1));
     setNotes(item.notes || "");
     setAiRawInput(rawInput);
 
-    // 单位
-    if ((item as any).unit) setUnit((item as any).unit);
     // 单价（分存到 unitPrice，元显示到 unitPriceDisplay）
     if ((item as any).unit_price && (item as any).unit_price > 0) {
       setUnitPrice(String((item as any).unit_price));
       setUnitPriceDisplay(((item as any).unit_price / 100).toFixed(2));
+    }
+
+    // 单位：如果 AI 建议的单位不在列表里，自动创建
+    if ((item as any).unit) {
+      const unitName: string = (item as any).unit;
+      const existing = unitOptions.find((u) => u.name === unitName);
+      if (!existing && orgId) {
+        try {
+          await createInventoryUnit(orgId, unitName);
+          const updated = await fetchInventoryUnits(orgId);
+          setUnitOptions(updated);
+        } catch {}
+      }
+      setUnit(unitName);
     }
 
     if (item.primary_category) {
@@ -172,12 +186,20 @@ export default function NewInventoryClient() {
       }
     }
 
-    // 匹配位置
+    // 位置：如果 AI 建议的位置不在列表里，自动创建
     if (item.location) {
-      const matchedLoc = locationOptions.find(
+      let matched = locationOptions.find(
         (l) => l.name === item.location || l.value === item.location
       );
-      if (matchedLoc) setLocation(matchedLoc.value);
+      if (!matched && orgId) {
+        try {
+          await createInventoryLocation(orgId, item.location);
+          const updated = await fetchInventoryLocations(orgId);
+          setLocationOptions(updated);
+          matched = updated.find((l) => l.name === item.location || l.value === item.location);
+        } catch {}
+      }
+      if (matched) setLocation(matched.value);
     }
 
     // 匹配状态
@@ -188,14 +210,21 @@ export default function NewInventoryClient() {
       }
     }
 
+    // 如果拍照识别，自动水印到表单图片（免得再次手动上传）
+    if (photoFile) {
+      setImageFile(photoFile);
+      setImagePreview(URL.createObjectURL(photoFile));
+    }
+
     // 记录 AI 输入信息
     setAiInputType("text");
     setAiParsedResult(item);
-  }, [primaryCategories, allCategories, locationOptions]);
+  }, [primaryCategories, allCategories, locationOptions, unitOptions, orgId]);
 
   // 将 AI 解析结果转为批量队列项（匹配数据库分类/位置值）
   const parsedItemToBatchItem = useCallback(
-    (parsed: AiParsedItem, rawInput: string): BatchItem => {
+    (parsed: AiParsedItem, rawInput: string, overrideLocs?: InventoryLocation[]): BatchItem => {
+      const locs = overrideLocs ?? locationOptions;
       let primaryCat = "";
       let subCat = "";
       if (parsed.primary_category) {
@@ -213,7 +242,7 @@ export default function NewInventoryClient() {
       }
       let loc = "";
       if (parsed.location) {
-        const ml = locationOptions.find((l) => l.name === parsed.location || l.value === parsed.location);
+        const ml = locs.find((l) => l.name === parsed.location || l.value === parsed.location);
         if (ml) loc = ml.value;
       }
       let st = "in_use";
@@ -263,14 +292,47 @@ export default function NewInventoryClient() {
   };
 
   // 接收 AI 面板的批量结果，加入确认队列
+  // 先自动创建 AI 建议中数据库里没有的单位/位置，减少用户额外手动输入
   const handleBatchApply = useCallback(
-    (items: AiParsedItem[], rawInput: string) => {
-      setBatchItems(items.map((item) => parsedItemToBatchItem(item, rawInput)));
+    async (items: AiParsedItem[], rawInput: string, photoFile?: File) => {
+      // 收集所有项目中独特的单位和位置名称
+      const uniqueUnits = [...new Set(items.map((i) => i.unit).filter(Boolean) as string[])];
+      const uniqueLocations = [...new Set(items.map((i) => i.location).filter(Boolean) as string[])];
+
+      // 自动创建缺失的单位
+      let latestLocs = locationOptions;
+      let needRefreshLocs = false;
+      for (const locName of uniqueLocations) {
+        if (!locationOptions.find((l) => l.name === locName || l.value === locName) && orgId) {
+          try { await createInventoryLocation(orgId, locName); needRefreshLocs = true; } catch {}
+        }
+      }
+      if (needRefreshLocs) {
+        latestLocs = await fetchInventoryLocations(orgId);
+        setLocationOptions(latestLocs);
+      }
+
+      // 自动创建缺失的单位
+      let needRefreshUnits = false;
+      for (const unitName of uniqueUnits) {
+        if (!unitOptions.find((u) => u.name === unitName) && orgId) {
+          try { await createInventoryUnit(orgId, unitName); needRefreshUnits = true; } catch {}
+        }
+      }
+      if (needRefreshUnits) {
+        const latestUnits = await fetchInventoryUnits(orgId);
+        setUnitOptions(latestUnits);
+      }
+
+      setBatchItems(items.map((item, idx) => ({
+        ...parsedItemToBatchItem(item, rawInput, latestLocs),
+        imageFile: idx === 0 ? photoFile : undefined, // 拍照关联到第一件物资
+      })));
       setBatchMsg("");
       setAiInputType("text");
       setAiRawInput(rawInput);
     },
-    [parsedItemToBatchItem]
+    [parsedItemToBatchItem, locationOptions, unitOptions, orgId]
   );
 
   const updateBatchItem = (idx: number, field: keyof BatchItem, value: string) => {
@@ -316,6 +378,15 @@ export default function NewInventoryClient() {
           unit: it.unit || null,
           unit_price: it.unit_price ? parseInt(it.unit_price) : null,
         });
+        // 如果有拍照图片，自动上传
+        if (it.imageFile) {
+          try {
+            const imgPath = await uploadInventoryImage(orgId, newId, it.imageFile);
+            await updateInventoryItem(newId, { image_path: imgPath });
+          } catch {
+            // 图片上传失败不阵塞主流程
+          }
+        }
         // 日志记录不阻塞主流程，并行执行
         await Promise.allSettled([
           logItemChanges(orgId, newId, "create", []),
@@ -434,8 +505,8 @@ export default function NewInventoryClient() {
       {/* AI 智能录入面板 */}
       {canWrite && (
         <AiInputPanel
-          onApply={(item, rawInput) => handleAiApply(item, rawInput)}
-          onBatchApply={handleBatchApply}
+          onApply={(item, rawInput, imageFile) => handleAiApply(item, rawInput, imageFile)}
+          onBatchApply={(items, rawInput, imageFile) => handleBatchApply(items, rawInput, imageFile)}
           disabled={!canWrite}
         />
       )}
@@ -464,6 +535,9 @@ export default function NewInventoryClient() {
                       placeholder="物资名称（必填）"
                       style={{ flex: 1, padding: "5px 8px", border: "1px solid #ddd", borderRadius: 4, fontWeight: 600, fontSize: 14, boxSizing: "border-box" }}
                     />
+                    {bItem.imageFile && (
+                      <span title="已自动关联拍照图片" style={{ fontSize: 12, color: "#6f42c1", flexShrink: 0 }}>📷</span>
+                    )}
                     <button type="button" onClick={() => removeBatchItem(idx)} title="移除" style={{ background: "none", border: "none", cursor: "pointer", color: "#c00", fontSize: 20, lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>×</button>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 6 }}>
