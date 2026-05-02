@@ -299,14 +299,16 @@ export function compressImage(
   });
 }
 
-/** 上传图片到 inventory-images bucket，返回 storage path（自动压缩） */
+/** 上传图片到 inventory-images bucket，返回 storage path（自动压缩）
+ *  存储压缩策略：最长边 1000px，JPEG 75%，保证加载速度同时清晰可辨。
+ */
 export async function uploadInventoryImage(
   orgId: string,
   itemId: string,
   file: File
 ): Promise<string> {
-  // 先压缩
-  const compressed = await compressImage(file);
+  // 先压缩（存储用，比 AI 识别用更小）
+  const compressed = await compressImage(file, 1000, 0.75);
   if (compressed.size > MAX_FILE_SIZE) {
     throw new Error(`文件 ${file.name} 压缩后仍超过 10MB（${(compressed.size / 1024 / 1024).toFixed(1)}MB），请手动压缩后再上传`);
   }
