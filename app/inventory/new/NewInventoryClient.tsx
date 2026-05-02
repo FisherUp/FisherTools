@@ -223,7 +223,8 @@ export default function NewInventoryClient() {
 
   // 将 AI 解析结果转为批量队列项（匹配数据库分类/位置值）
   const parsedItemToBatchItem = useCallback(
-    (parsed: AiParsedItem, rawInput: string): BatchItem => {
+    (parsed: AiParsedItem, rawInput: string, overrideLocs?: InventoryLocation[]): BatchItem => {
+      const locs = overrideLocs ?? locationOptions;
       let primaryCat = "";
       let subCat = "";
       if (parsed.primary_category) {
@@ -241,7 +242,7 @@ export default function NewInventoryClient() {
       }
       let loc = "";
       if (parsed.location) {
-        const ml = locationOptions.find((l) => l.name === parsed.location || l.value === parsed.location);
+        const ml = locs.find((l) => l.name === parsed.location || l.value === parsed.location);
         if (ml) loc = ml.value;
       }
       let st = "in_use";
