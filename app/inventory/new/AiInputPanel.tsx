@@ -38,7 +38,7 @@ export default function AiInputPanel({ onApply, onBatchApply, disabled }: Props)
 
   // ─── 图片压缩（Canvas 缩放 + JPEG 压缩） ───
   const compressImage = useCallback(
-    (file: File, maxDim = 1600, quality = 0.85): Promise<string> => {
+    (file: File, maxDim = 1024, quality = 0.7): Promise<string> => {
       return new Promise((resolve, reject) => {
         const img = new Image();
         const url = URL.createObjectURL(file);
