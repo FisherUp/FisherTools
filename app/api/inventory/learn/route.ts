@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
+export const runtime = "edge";
+
 /**
  * POST /api/inventory/learn
  * 根据物资信息和儿童年龄，调用 Azure OpenAI 生成适龄学习内容
@@ -131,6 +133,9 @@ Return strict JSON (no markdown code blocks):
 
   const url = `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
   try {
     const aiRes = await fetch(url, {
       method: "POST",
@@ -144,7 +149,9 @@ Return strict JSON (no markdown code blocks):
         max_tokens: 1500,
         response_format: { type: "json_object" },
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!aiRes.ok) {
       const errText = await aiRes.text();
@@ -161,6 +168,10 @@ Return strict JSON (no markdown code blocks):
 
     return NextResponse.json({ ...parsed, variant: variantIndex, language });
   } catch (e: any) {
+    clearTimeout(timeoutId);
+    if (e.name === "AbortError") {
+      return NextResponse.json({ error: "AI 生成超时（已等待 25 秒），请重试" }, { status: 504 });
+    }
     console.error("Learn API error:", e);
     return NextResponse.json({ error: "AI 服务调用失败：" + (e.message || String(e)) }, { status: 502 });
   }

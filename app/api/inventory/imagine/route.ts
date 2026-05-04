@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
+export const runtime = "edge";
+
 /**
  * POST /api/inventory/imagine
  * 根据孩子描述的场景，调用 Azure OpenAI gpt-image-1-mini 生成场景插画
@@ -74,42 +76,55 @@ export async function POST(req: NextRequest) {
   // Azure OpenAI images/generations endpoint
   const url = `${endpoint}/openai/deployments/${deployment}/images/generations?api-version=${apiVersion}`;
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "api-key": apiKey,
-    },
-    body: JSON.stringify({
-      prompt: dallePrompt,
-      size: "1024x1024",
-      quality: "medium",   // gpt-image-1-mini: low / medium / high（medium 性价比最佳）
-      n: 1,
-      // response_format 参数 gpt-image-1-mini 不支持，不传（默认返回 b64_json）
-    }),
-  });
+  // Edge Runtime 30s 超时，AbortController 25s 安全裕量
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
 
-  if (!resp.ok) {
-    const errData = await resp.json().catch(() => ({}));
-    const msg = (errData as any)?.error?.message ?? `HTTP ${resp.status}`;
-    console.error("gpt-image-1-mini error:", errData);
-    return NextResponse.json({ error: "图片生成失败：" + msg }, { status: 500 });
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify({
+        prompt: dallePrompt,
+        size: "1024x1024",
+        quality: "medium",
+        n: 1,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      const msg = (errData as any)?.error?.message ?? `HTTP ${resp.status}`;
+      console.error("gpt-image-1-mini error:", errData);
+      return NextResponse.json({ error: "图片生成失败：" + msg }, { status: 500 });
+    }
+
+    const data = await resp.json();
+    const item = data?.data?.[0];
+
+    let imageUrl: string;
+    if (item?.url) {
+      imageUrl = item.url;
+    } else if (item?.b64_json) {
+      imageUrl = `data:image/png;base64,${item.b64_json}`;
+    } else {
+      console.error("gpt-image-1-mini: unexpected response shape", JSON.stringify(data).slice(0, 300));
+      return NextResponse.json({ error: "图片生成成功但未返回图像数据" }, { status: 500 });
+    }
+
+    const revisedPrompt: string = item?.revised_prompt ?? "";
+    return NextResponse.json({ imageUrl, revisedPrompt });
+  } catch (e: any) {
+    clearTimeout(timeoutId);
+    if (e.name === "AbortError") {
+      return NextResponse.json({ error: "图片生成超时（已等待 25 秒），请重试" }, { status: 504 });
+    }
+    console.error("gpt-image-1-mini fetch error:", e);
+    return NextResponse.json({ error: "图片生成失败：" + (e.message || String(e)) }, { status: 502 });
   }
-
-  const data = await resp.json();
-  const item = data?.data?.[0];
-
-  // Azure gpt-image-1-mini 返回 b64_json（默认）或 url（若未来支持）
-  let imageUrl: string;
-  if (item?.url) {
-    imageUrl = item.url;
-  } else if (item?.b64_json) {
-    imageUrl = `data:image/png;base64,${item.b64_json}`;
-  } else {
-    console.error("gpt-image-1-mini: unexpected response shape", JSON.stringify(data).slice(0, 300));
-    return NextResponse.json({ error: "图片生成成功但未返回图像数据" }, { status: 500 });
-  }
-
-  const revisedPrompt: string = item?.revised_prompt ?? "";
-  return NextResponse.json({ imageUrl, revisedPrompt });
 }

@@ -54,20 +54,40 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
+  // ── 角色解析：优先读 cookie 缓存，未命中时才查 DB（减少数据库往返） ──
+  const ROLE_COOKIE = "x-user-role";
+  const resolveRole = async (): Promise<string | null> => {
+    const cached = req.cookies.get(ROLE_COOKIE)?.value;
+    if (cached) return cached;
+    if (!session) return null;
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", session.user.id)
+      .single();
+    return profile?.role ?? null;
+  };
+  const setRoleCookie = (target: NextResponse, role: string) => {
+    target.cookies.set(ROLE_COOKIE, role, {
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 300, // 5 分钟缓存
+      path: "/",
+    });
+  };
+
   // 4) 登录页逻辑：
   //    - 未登录：允许访问 /login
   //    - 已登录：禁止停留在 /login，根据角色跳转
   if (pathname === "/login") {
     if (session) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", session.user.id)
-        .single();
+      const role = await resolveRole();
       const url = req.nextUrl.clone();
-      url.pathname = profile?.role === "inventory-edit" || profile?.role === "learner" ? "/inventory" : "/transactions";
+      url.pathname = (role === "inventory-edit" || role === "learner") ? "/inventory" : "/transactions";
       url.search = "";
-      return NextResponse.redirect(url);
+      const redir = NextResponse.redirect(url);
+      if (role) setRoleCookie(redir, role);
+      return redir;
     }
     return res;
   }
@@ -77,22 +97,24 @@ export async function middleware(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirectedFrom", pathname);
-    return NextResponse.redirect(url);
+    const redir = NextResponse.redirect(url);
+    redir.cookies.set(ROLE_COOKIE, "", { maxAge: 0, path: "/" });
+    return redir;
   }
 
   // 6) inventory-edit / learner 角色：只允许访问 /inventory 及其子路由
   if (!pathname.startsWith("/inventory")) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", session.user.id)
-      .single();
-    if (profile?.role === "inventory-edit" || profile?.role === "learner") {
+    const role = await resolveRole();
+    if (role === "inventory-edit" || role === "learner") {
       const url = req.nextUrl.clone();
       url.pathname = "/inventory";
       url.search = "";
-      return NextResponse.redirect(url);
+      const redir = NextResponse.redirect(url);
+      setRoleCookie(redir, role);
+      return redir;
     }
+    // 缓存角色以供后续请求使用
+    if (role) setRoleCookie(res, role);
   }
 
   return res;

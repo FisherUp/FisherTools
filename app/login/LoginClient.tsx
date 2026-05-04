@@ -97,7 +97,7 @@ export default function LoginClient() {
           {loading ? "处理中..." : "登录"}
         </button>
         <button onClick={resetPassword} disabled={loading} style={{ padding: 10 }}>
-         忘记密码（发邮件重置）
+          忘记密码 / 设置密码（发邮件）
         </button>
 
 

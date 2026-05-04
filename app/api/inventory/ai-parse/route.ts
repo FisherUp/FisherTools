@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
+export const runtime = "edge";
+
 /**
  * POST /api/inventory/ai-parse
  * 接收自然语言文本，调用 Azure OpenAI 解析为结构化物资字段
@@ -173,6 +175,9 @@ ${categoryDescription}
         }
       : { role: "user", content: rawText };
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
     const aiRes = await fetch(url, {
       method: "POST",
       headers: {
@@ -186,10 +191,11 @@ ${categoryDescription}
         ],
         temperature: 0.1,
         max_tokens: 2000,
-        // 视觉模式（含图片）时，Azure 不支持 response_format 参数
         ...(imageBase64 ? {} : { response_format: { type: "json_object" } }),
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!aiRes.ok) {
       const errText = await aiRes.text();
@@ -235,6 +241,9 @@ ${categoryDescription}
       raw_input: rawText || "[图片识别]",
     });
   } catch (e: any) {
+    if (e.name === "AbortError") {
+      return NextResponse.json({ error: "AI 解析超时（已等待 25 秒），请重试" }, { status: 504 });
+    }
     console.error("AI parse error:", e);
     return NextResponse.json(
       { error: "AI 服务调用失败：" + (e.message || String(e)) },
