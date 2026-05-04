@@ -40,24 +40,25 @@ export default function LoginClient() {
       setLoading(false);
     }
   };
-  
-const resetPassword = async () => {
-  const emailTrim = email.trim();
-  if (!emailTrim) return setMsg("请先输入邮箱");
+  const resetPassword = async () => {
+    const emailTrim = email.trim();
+    if (!emailTrim) return setMsg("请先输入邮箱");
 
-  setLoading(true);
-  setMsg("");
-  try {
-    const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password`;
+    setLoading(true);
+    setMsg("");
+    try {
+      const callbackUrl = new URL("/auth/callback", window.location.origin);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(emailTrim, { redirectTo });
-    if (error) return setMsg("发送失败：" + error.message);
+      const { error } = await supabase.auth.resetPasswordForEmail(emailTrim, {
+        redirectTo: callbackUrl.toString(),
+      });
+      if (error) return setMsg("发送失败：" + error.message);
 
-    setMsg("✅ 已发送重置密码邮件，请到邮箱打开链接设置新密码。");
-  } finally {
-    setLoading(false);
-  }
-};
+      setMsg("✅ 已发送重置密码邮件，请到邮箱打开链接设置新密码。");
+    } finally {
+      setLoading(false);
+    }
+  };
 
 
   return (
