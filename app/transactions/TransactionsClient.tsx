@@ -926,28 +926,6 @@ export default function TransactionsClient() {
               ℹ️ 管理功能需要管理员权限
             </span>
           )}
-
-          <a href="/inventory" style={{ padding: "8px 12px", fontWeight: 700 }}>
-            物资管理
-          </a>
-
-          <a href="/services" style={{ padding: "8px 12px", fontWeight: 700 }}>
-            服务排班
-          </a>
-
-          <a href="/leaves" style={{ padding: "8px 12px", fontWeight: 700 }}>
-            休假管理
-          </a>
-
-          <button
-            onClick={async () => {
-              await supabase.auth.signOut();
-              window.location.href = "/login";
-            }}
-            style={{ padding: "8px 12px", fontWeight: 700 }}
-          >
-            退出
-          </button>
         </div>
       </div>
 
