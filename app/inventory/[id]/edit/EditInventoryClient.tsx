@@ -21,7 +21,7 @@ import {
   createInventoryUnit,
   InventoryUnit,
   STATUS_OPTIONS,
-  MAX_FILE_SIZE,
+  MAX_SOURCE_FILE_SIZE,
   getPrimaryCategories,
   getSubCategories,
   logItemChanges,
@@ -242,8 +242,8 @@ export default function EditInventoryClient({ id }: { id: string }) {
     if (!fileList || fileList.length === 0) return;
     const file = fileList[0];
 
-    if (file.size > MAX_FILE_SIZE) {
-      setImgMsg(`文件 ${file.name} 超过 10MB，请压缩后再上传`);
+    if (file.size > MAX_SOURCE_FILE_SIZE) {
+      setImgMsg(`文件 ${file.name} 超过 50MB，请先在本地压缩后再上传`);
       return;
     }
 

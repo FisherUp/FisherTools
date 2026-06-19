@@ -1,9 +1,16 @@
 import { supabase } from "../supabaseClient";
+import {
+  compressImageFile,
+  MAX_INVENTORY_IMAGE_BYTES,
+  MAX_SOURCE_IMAGE_BYTES,
+  uploadInventoryImageFile,
+} from "./imageStorageService";
 
 // ─── 常量 ───
 const BUCKET = "inventory-images";
 const SIGNED_URL_TTL = 300; // 5 分钟
-export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_FILE_SIZE = MAX_INVENTORY_IMAGE_BYTES; // 10 MB
+export const MAX_SOURCE_FILE_SIZE = MAX_SOURCE_IMAGE_BYTES; // 50 MB
 
 // ─── 类型 ───
 export type InventoryItem = {
@@ -256,46 +263,10 @@ export function compressImage(
   maxDim = 1200,
   quality = 0.7
 ): Promise<File> {
-  return new Promise((resolve, reject) => {
-    // 非图片直接返回原文件
-    if (!file.type.startsWith("image/")) return resolve(file);
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      let w = img.width;
-      let h = img.height;
-      if (w <= maxDim && h <= maxDim && file.size <= 300 * 1024) {
-        // 已经很小，无需压缩
-        return resolve(file);
-      }
-      if (w > maxDim || h > maxDim) {
-        const ratio = Math.min(maxDim / w, maxDim / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) return reject(new Error("压缩失败"));
-          const compressed = new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
-            type: "image/jpeg",
-          });
-          resolve(compressed);
-        },
-        "image/jpeg",
-        quality
-      );
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(file); // 解码失败则返回原文件
-    };
-    img.src = url;
+  return compressImageFile(file, {
+    maxDimension: maxDim,
+    quality,
+    skipBelowBytes: 300 * 1024,
   });
 }
 
@@ -307,22 +278,8 @@ export async function uploadInventoryImage(
   itemId: string,
   file: File
 ): Promise<string> {
-  // 先压缩（存储用，比 AI 识别用更小）
-  const compressed = await compressImage(file, 1000, 0.75);
-  if (compressed.size > MAX_FILE_SIZE) {
-    throw new Error(`文件 ${file.name} 压缩后仍超过 10MB（${(compressed.size / 1024 / 1024).toFixed(1)}MB），请手动压缩后再上传`);
-  }
-
-  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-  const storagePath = `${orgId}/${itemId}/${Date.now()}_${safeName}`;
-
-  const { error } = await supabase.storage.from(BUCKET).upload(storagePath, compressed, {
-    upsert: false,
-    contentType: compressed.type,
-  });
-
-  if (error) throw new Error("上传图片失败：" + error.message);
-  return storagePath;
+  const result = await uploadInventoryImageFile(orgId, itemId, file);
+  return result.storagePath;
 }
 
 /** 删除 Storage 中的图片 */
@@ -824,4 +781,3 @@ export function fmtLearnTime(seconds: number): string {
   const mins = Math.round(seconds / 60);
   return `${mins}分`;
 }
-

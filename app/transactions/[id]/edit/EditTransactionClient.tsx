@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../../../lib/services/userDisplay";
+import {
+  formatBytes,
+  uploadReceiptImageFile,
+} from "../../../../lib/services/imageStorageService";
 
 type Account = { id: string; name: string; type: "cash" | "bank"; is_active: boolean };
 type Category = { id: string; name: string; is_active: boolean };
@@ -38,7 +42,6 @@ type AttachmentView = AttachmentRow & {
   signed_url: string; // 临时访问链接
 };
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const BUCKET = "receipts";
 const SIGNED_URL_TTL = 300; // 5分钟
 
@@ -177,31 +180,28 @@ export default function EditTransactionClient({ id }: { id: string }) {
   const uploadReceipts = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
 
-    for (const f of Array.from(fileList)) {
-      if (f.size > MAX_FILE_SIZE) {
-        setAttMsg(`❌ 文件 ${f.name} 超过 20MB（${(f.size / 1024 / 1024).toFixed(1)}MB），请压缩后再上传`);
-        return;
-      }
-    }
-
     setFilesUploading(true);
     setAttMsg("");
 
     try {
       const { orgId } = await getMyProfile();
+      let compressedCount = 0;
+      let savedBytes = 0;
+      const errors: string[] = [];
 
       for (const file of Array.from(fileList)) {
-        const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-        const storagePath = `${orgId}/${id}/${Date.now()}_${safeName}`;
-
-        // 1) 上传 Storage
-        const { error: upErr } = await supabase.storage.from(BUCKET).upload(storagePath, file, {
-          upsert: false,
-        });
-
-        if (upErr) {
-          console.error("UPLOAD ERROR:", upErr);
-          setAttMsg("上传失败：" + upErr.message);
+        let storagePath = "";
+        try {
+          // 1) 浏览器本地压缩后上传 Storage
+          const uploaded = await uploadReceiptImageFile(orgId, id, file);
+          storagePath = uploaded.storagePath;
+          if (uploaded.compressed) {
+            compressedCount += 1;
+            savedBytes += Math.max(0, uploaded.originalBytes - uploaded.uploadedBytes);
+          }
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : String(e);
+          errors.push(`${file.name}：${message}`);
           continue;
         }
 
@@ -217,12 +217,14 @@ export default function EditTransactionClient({ id }: { id: string }) {
           // 写入失败就回滚 storage 文件，避免“storage 有文件但表没记录”
           console.error("INSERT attachment ERROR:", insErr);
           await supabase.storage.from(BUCKET).remove([storagePath]);
-          setAttMsg(`写入附件失败（${file.name}）：${insErr.message}（已回滚Storage文件）`);
+          errors.push(`写入附件失败（${file.name}）：${insErr.message}（已回滚 Storage 文件）`);
         }
       }
 
       await loadAttachments();
-      setAttMsg("✅ 上传完成");
+      const savedText = compressedCount > 0 ? `，已压缩 ${compressedCount} 张，约节省 ${formatBytes(savedBytes)}` : "";
+      const errorText = errors.length > 0 ? `；失败 ${errors.length} 个：${errors.join("；")}` : "";
+      setAttMsg(`✅ 上传完成${savedText}${errorText}`);
     } catch (e: any) {
       setAttMsg(String(e?.message ?? e));
     } finally {
@@ -526,7 +528,7 @@ export default function EditTransactionClient({ id }: { id: string }) {
 
       <hr style={{ margin: "24px 0" }} />
 
-      <h2 style={{ fontSize: 16, fontWeight: 800 }}>票据图片（Private + Signed URL，≤20MB）</h2>
+      <h2 style={{ fontSize: 16, fontWeight: 800 }}>票据图片（上传前自动压缩，压缩后 ≤20MB）</h2>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
         <input
@@ -558,7 +560,7 @@ export default function EditTransactionClient({ id }: { id: string }) {
           >
             {a.signed_url ? (
               <a href={a.signed_url} target="_blank" rel="noreferrer">
-                <img src={a.signed_url} style={{ width: "100%", height: 160, objectFit: "cover" }} />
+                <img src={a.signed_url} alt="票据图片" style={{ width: "100%", height: 160, objectFit: "cover" }} />
               </a>
             ) : (
               <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>

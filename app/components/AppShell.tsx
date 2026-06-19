@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import {
+  compressReferencedImages,
+  formatBytes,
+  getImageStorageUsage,
+  getImageUsagePercent,
+  ImageStorageUsage,
+} from "../../lib/services/imageStorageService";
 
 // 不显示导航壳的路由（登录 / 鉴权相关页面保持原样）
 const BARE_ROUTES = ["/login", "/reset-password", "/auth"];
@@ -83,9 +90,15 @@ const ROLE_LABELS: Record<string, string> = {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
   const [role, setRole] = useState<Role>("");
+  const [orgId, setOrgId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [imageUsage, setImageUsage] = useState<ImageStorageUsage | null>(null);
+  const [imageUsageLoading, setImageUsageLoading] = useState(false);
+  const [imageUsageMsg, setImageUsageMsg] = useState("");
+  const [compressingImages, setCompressingImages] = useState(false);
+  const [compressProgress, setCompressProgress] = useState("");
 
   const isBare = pathname === "/" || BARE_ROUTES.some((r) => pathname.startsWith(r));
 
@@ -105,11 +118,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }
         const { data: profile } = await supabase
           .from("profiles")
-          .select("role, display_name, email")
+          .select("org_id, role, display_name, email")
           .eq("id", user.id)
           .single();
         if (cancelled) return;
         setRole(((profile?.role as Role) ?? "") as Role);
+        setOrgId(String(profile?.org_id ?? ""));
         setDisplayName(
           String(profile?.display_name || profile?.email || user.email || "").trim()
         );
@@ -121,6 +135,52 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [isBare]);
+
+  const loadImageUsage = useCallback(async () => {
+    if (!orgId || isBare) return;
+    setImageUsageLoading(true);
+    setImageUsageMsg("");
+    try {
+      const usage = await getImageStorageUsage(orgId);
+      setImageUsage(usage);
+      if (usage.errors.length > 0) setImageUsageMsg("部分文件按数据库引用估算");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setImageUsageMsg("图片容量统计失败：" + message);
+    } finally {
+      setImageUsageLoading(false);
+    }
+  }, [isBare, orgId]);
+
+  useEffect(() => {
+    void loadImageUsage();
+  }, [loadImageUsage]);
+
+  const compressStoredImages = async () => {
+    if (!orgId || role !== "admin") return;
+    const ok = confirm("将压缩当前组织已上传的票据图片和物资图片。处理过程中请不要关闭页面。是否继续？");
+    if (!ok) return;
+
+    setCompressingImages(true);
+    setImageUsageMsg("");
+    setCompressProgress("准备压缩...");
+    try {
+      const result = await compressReferencedImages(orgId, (progress) => {
+        setCompressProgress(`${progress.index}/${progress.total} ${progress.currentLabel}`);
+      });
+      const savedText = result.savedBytes > 0 ? `，约节省 ${formatBytes(result.savedBytes)}` : "";
+      const failedText = result.failed > 0 ? `，失败 ${result.failed} 张` : "";
+      const warningText = result.errors.length > 0 ? `；${result.errors.slice(0, 2).join("；")}` : "";
+      setImageUsageMsg(`旧图压缩完成：压缩 ${result.compressed} 张，跳过 ${result.skipped} 张${savedText}${failedText}${warningText}`);
+      setCompressProgress("");
+      await loadImageUsage();
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setImageUsageMsg("旧图压缩失败：" + message);
+    } finally {
+      setCompressingImages(false);
+    }
+  };
 
   // 关闭移动端抽屉：路由变化时
   useEffect(() => {
@@ -195,6 +255,53 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
+        {ready && orgId && (
+          <div className="app-storage">
+            <div className="app-storage-head">
+              <span>图片空间</span>
+              <button type="button" onClick={loadImageUsage} disabled={imageUsageLoading || compressingImages}>
+                {imageUsageLoading ? "统计中" : "刷新"}
+              </button>
+            </div>
+
+            <div className="app-storage-total">
+              {imageUsage ? `${formatBytes(imageUsage.totalBytes)} / ${formatBytes(imageUsage.quotaBytes)}` : imageUsageLoading ? "统计中..." : "暂无数据"}
+            </div>
+            <div className="app-storage-bar" aria-hidden="true">
+              <span style={{ width: `${imageUsage ? getImageUsagePercent(imageUsage.totalBytes, imageUsage.quotaBytes) : 0}%` }} />
+            </div>
+            {imageUsage && (
+              <div className="app-storage-meta">
+                {imageUsage.fileCount} 个文件 · {getImageUsagePercent(imageUsage.totalBytes, imageUsage.quotaBytes).toFixed(1)}%
+              </div>
+            )}
+            {imageUsage && (
+              <div className="app-storage-split">
+                {imageUsage.buckets.map((b) => (
+                  <div key={b.bucket}>
+                    {b.label.replace("图片", "")} {formatBytes(b.totalBytes)}
+                  </div>
+                ))}
+              </div>
+            )}
+            {role === "admin" && (
+              <button
+                type="button"
+                className="app-storage-compress"
+                onClick={compressStoredImages}
+                disabled={compressingImages || imageUsageLoading}
+              >
+                {compressingImages ? "压缩中..." : "压缩旧图"}
+              </button>
+            )}
+            {(compressProgress || imageUsageMsg) && (
+              <div className="app-storage-msg" title={imageUsageMsg || compressProgress}>
+                {compressProgress || imageUsageMsg}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="app-user">
           <div className="app-user-info">
             <div className="app-user-name" title={displayName}>
@@ -246,6 +353,43 @@ const SHELL_CSS = `
 .app-nav-item:hover { background: rgba(255,255,255,.06); color: #fff; }
 .app-nav-item.active { background: #2563eb; color: #fff; }
 .app-nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.app-storage {
+  margin: 0 12px 10px; padding: 10px; border-radius: 8px;
+  background: rgba(15,23,42,.72); border: 1px solid rgba(148,163,184,.18);
+}
+.app-storage-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: #cbd5e1; font-size: 12px; font-weight: 800;
+}
+.app-storage-head button,
+.app-storage-compress {
+  border: 1px solid rgba(148,163,184,.28); background: rgba(255,255,255,.06);
+  color: #e2e8f0; border-radius: 6px; font-size: 11px; font-weight: 800;
+  padding: 4px 8px; cursor: pointer;
+}
+.app-storage-head button:disabled,
+.app-storage-compress:disabled { opacity: .55; cursor: not-allowed; }
+.app-storage-total { margin-top: 8px; color: #f8fafc; font-size: 14px; font-weight: 900; }
+.app-storage-bar {
+  height: 7px; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,.22);
+  margin-top: 7px;
+}
+.app-storage-bar span {
+  display: block; height: 100%; max-width: 100%; border-radius: inherit;
+  background: #22c55e; transition: width .2s ease;
+}
+.app-storage-meta,
+.app-storage-split,
+.app-storage-msg {
+  color: #94a3b8; font-size: 11px; line-height: 1.45; margin-top: 6px;
+}
+.app-storage-split { display: grid; gap: 2px; }
+.app-storage-compress { width: 100%; margin-top: 8px; padding: 6px 8px; }
+.app-storage-compress:hover:not(:disabled),
+.app-storage-head button:hover:not(:disabled) { background: rgba(37,99,235,.45); color: #fff; }
+.app-storage-msg {
+  max-height: 46px; overflow: hidden; color: #cbd5e1; word-break: break-word;
+}
 .app-user {
   padding: 12px 14px; border-top: 1px solid rgba(255,255,255,.08);
   display: flex; align-items: center; gap: 10px;
