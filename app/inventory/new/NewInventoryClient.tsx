@@ -15,7 +15,7 @@ import {
   InventoryLocation,
   InventoryUnit,
   STATUS_OPTIONS,
-  MAX_FILE_SIZE,
+  MAX_SOURCE_FILE_SIZE,
   getPrimaryCategories,
   getSubCategories,
   findCategoryByValue,
@@ -133,8 +133,8 @@ export default function NewInventoryClient() {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_FILE_SIZE) {
-      setMsg(`文件 ${file.name} 超过 10MB，请压缩后再上传`);
+    if (file.size > MAX_SOURCE_FILE_SIZE) {
+      setMsg(`文件 ${file.name} 超过 50MB，请先在本地压缩后再上传`);
       return;
     }
     setImageFile(file);
