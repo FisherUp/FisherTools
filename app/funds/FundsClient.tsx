@@ -111,8 +111,18 @@ function BalanceCard({ summary }: { summary: FundBalanceSummary }) {
         {fmtYuan(summary.balance)}
       </div>
       <div style={{ marginTop: 8, fontSize: 11, color: "#888", lineHeight: 1.8 }}>
-        <span>累计划拨：{fmtYuan(summary.total_allocated)}</span>
+        <span style={{ color: "#2e7d32" }}>
+          累计划入：+{fmtYuan(summary.total_allocated)}
+        </span>
         <br />
+        {summary.total_transferred_out > 0 && (
+          <>
+            <span style={{ color: "#c62828" }}>
+              累计划出：-{fmtYuan(summary.total_transferred_out)}
+            </span>
+            <br />
+          </>
+        )}
         {summary.fund_type === "jh_operations" && (
           <>
             <span>期初后收入：{fmtYuan(summary.total_income)}</span>
@@ -392,7 +402,7 @@ export default function FundsClient() {
               : ALL_FUND_TYPES.map((ft) => (
                   <BalanceCard
                     key={ft}
-                    summary={{ fund_type: ft, total_allocated: 0, total_income: 0, total_expense: 0, balance: 0 }}
+                    summary={{ fund_type: ft, total_allocated: 0, total_transferred_out: 0, total_income: 0, total_expense: 0, balance: 0 }}
                   />
                 ))}
           </div>

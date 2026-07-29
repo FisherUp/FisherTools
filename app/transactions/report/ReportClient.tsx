@@ -48,6 +48,13 @@ type TxDetail = {
   account_name: string;
 };
 
+/** 上年及以前（自期初日起）的流水，用于计算年初结转余额 */
+type PriorTxRow = {
+  amount: number;
+  direction: "income" | "expense";
+  category_id: string;
+};
+
 type PopupInfo = {
   categoryId: string | null; // null = income aggregate
   month: number;
@@ -88,6 +95,7 @@ export default function ReportClient() {
   const [txAgg, setTxAgg] = useState<TxAgg[]>([]);
   const [allocations, setAllocations] = useState<AllocationRow[]>([]);
   const [txDetails, setTxDetails] = useState<TxDetail[]>([]);
+  const [priorTx, setPriorTx] = useState<PriorTxRow[]>([]);
 
   /* 弹窗状态 */
   const [popup, setPopup] = useState<PopupInfo | null>(null);
@@ -133,7 +141,33 @@ export default function ReportClient() {
         agg.push({ category_id, direction: direction as "income" | "expense", month: Number(month), total });
       });
       setTxAgg(agg);
-      setAllocations((allocRes.data ?? []) as AllocationRow[]);
+      const allocRows = (allocRes.data ?? []) as AllocationRow[];
+      setAllocations(allocRows);
+
+      /* 期初日：最早一条 opening_balance 划拨的日期。
+         期初余额已包含该日期之前的历史收支（如 2025-12 的流水），
+         因此结转计算只能从期初日当天起算，否则会重复计算。*/
+      const openDate =
+        allocRows
+          .filter((a) => a.allocation_type === "opening_balance")
+          .map((a) => a.allocation_date)
+          .sort()[0] ?? null;
+
+      /* 上年及以前（期初日 ~ 上年末）的收支，用于年初结转余额 */
+      let priorQuery = supabase
+        .from("transactions")
+        .select("amount, direction, category_id")
+        .eq("org_id", oid)
+        .lte("date", `${yr - 1}-12-31`);
+      if (openDate) priorQuery = priorQuery.gte("date", openDate);
+      const priorRes = await priorQuery;
+      setPriorTx(
+        ((priorRes.data ?? []) as { amount: number; direction: string; category_id: string }[]).map((t) => ({
+          amount: Number(t.amount),
+          direction: t.direction as "income" | "expense",
+          category_id: t.category_id,
+        }))
+      );
 
       /* 交易明细（含账户名） */
       const acctMap = new Map<string, string>();
@@ -202,41 +236,120 @@ export default function ReportClient() {
     })).filter((g) => g.cats.length > 0);
   }, [expenseCategories, budgetMap]);
 
-  /* 年初余额：取该年1月1日之前（含当天）的所有 opening_balance 类型划拨，按基金汇总 */
-  const openingBalanceMap = useMemo(() => {
+  /* 类别 → 基金归属 */
+  const catFundMap = useMemo(() => {
+    const m = new Map<string, FundType | null>();
+    for (const c of categories) m.set(c.id, c.fund_type);
+    return m;
+  }, [categories]);
+
+  /* 上年及以前（自期初日起）的收入合计与各基金支出合计 */
+  const priorAgg = useMemo(() => {
+    let income = 0;
+    const expense = new Map<FundType, number>();
+    for (const ft of ALL_FUND_TYPES) expense.set(ft, 0);
+    for (const t of priorTx) {
+      if (t.direction === "income") {
+        income += t.amount;
+      } else {
+        const ft = catFundMap.get(t.category_id);
+        if (ft) expense.set(ft, (expense.get(ft) ?? 0) + t.amount);
+      }
+    }
+    return { income, expense };
+  }, [priorTx, catFundMap]);
+
+  /* 本年各基金支出合计（含未设预算的类别，保证余额准确） */
+  const yearExpenseByFund = useMemo(() => {
     const m = new Map<FundType, number>();
     for (const ft of ALL_FUND_TYPES) m.set(ft, 0);
-    for (const a of allocations) {
-      if (a.allocation_date <= `${year}-01-01`) {
-        m.set(a.fund_type, (m.get(a.fund_type) ?? 0) + Number(a.amount));
-      }
+    for (const t of txAgg) {
+      if (t.direction !== "expense") continue;
+      const ft = catFundMap.get(t.category_id);
+      if (ft) m.set(ft, (m.get(ft) ?? 0) + t.total);
     }
     return m;
+  }, [txAgg, catFundMap]);
+
+  /* 截至某日期的划拨聚合。
+     划拨是「运营管理池内部转账」：一次非期初划拨的整批金额全部从运营管理池划出，
+     再按比例划入四个基金（运营管理自身那份即回流）。期初余额不属于转出。 */
+  const aggAllocationsUpTo = useCallback(
+    (upTo: string) => {
+      const credited = new Map<FundType, number>();
+      for (const ft of ALL_FUND_TYPES) credited.set(ft, 0);
+      let jhOut = 0;
+      for (const a of allocations) {
+        if (a.allocation_date > upTo) continue;
+        const amt = Number(a.amount);
+        credited.set(a.fund_type, (credited.get(a.fund_type) ?? 0) + amt);
+        if (a.allocation_type !== "opening_balance") jhOut += amt;
+      }
+      return { credited, jhOut };
+    },
+    [allocations]
+  );
+
+  /* 年初余额 = 上年末结转余额（期初 + 截至今年1月1日的划拨 + 期初后至上年末的收支） */
+  const openingBalanceMap = useMemo(() => {
+    const { credited, jhOut } = aggAllocationsUpTo(`${year}-01-01`);
+    const m = new Map<FundType, number>();
+    for (const ft of ALL_FUND_TYPES) {
+      const isJh = ft === "jh_operations";
+      const base = (credited.get(ft) ?? 0) - (isJh ? jhOut : 0);
+      const income = isJh ? priorAgg.income : 0;
+      m.set(ft, base + income - (priorAgg.expense.get(ft) ?? 0));
+    }
+    return m;
+  }, [aggAllocationsUpTo, year, priorAgg]);
+
+  /* 本年收入合计（全部进入运营管理资金池） */
+  const yearIncomeTotal = useMemo(
+    () => txAgg.reduce((s, t) => (t.direction === "income" ? s + t.total : s), 0),
+    [txAgg]
+  );
+
+  /* 年末余额 = 年初余额 + 本年划拨净额 + 本年收入（仅运营管理）− 本年该基金支出 */
+  const endingBalanceMap = useMemo(() => {
+    const { credited, jhOut } = aggAllocationsUpTo(`${year}-12-31`);
+    const m = new Map<FundType, number>();
+    for (const ft of ALL_FUND_TYPES) {
+      const isJh = ft === "jh_operations";
+      const base = (credited.get(ft) ?? 0) - (isJh ? jhOut : 0);
+      const income = isJh ? priorAgg.income + yearIncomeTotal : 0;
+      const expense =
+        (priorAgg.expense.get(ft) ?? 0) + (yearExpenseByFund.get(ft) ?? 0);
+      m.set(ft, base + income - expense);
+    }
+    return m;
+  }, [aggAllocationsUpTo, year, priorAgg, yearExpenseByFund, yearIncomeTotal]);
+
+  /* 本年度的划拨批次（半年划拨 + 手动调整），按日期分组 */
+  const transferBatches = useMemo(() => {
+    const dateMap = new Map<
+      string,
+      { type: string; credited: Map<FundType, number>; batchTotal: number }
+    >();
+    for (const a of allocations) {
+      if (a.allocation_type === "opening_balance") continue;
+      if (a.allocation_date < `${year}-01-01` || a.allocation_date > `${year}-12-31`) continue;
+      if (!dateMap.has(a.allocation_date)) {
+        dateMap.set(a.allocation_date, {
+          type: a.allocation_type,
+          credited: new Map(),
+          batchTotal: 0,
+        });
+      }
+      const entry = dateMap.get(a.allocation_date)!;
+      const amt = Number(a.amount);
+      entry.credited.set(a.fund_type, (entry.credited.get(a.fund_type) ?? 0) + amt);
+      entry.batchTotal += amt;
+    }
+    return Array.from(dateMap.entries())
+      .map(([date, v]) => ({ date, ...v }))
+      .sort((a, b) => a.date.localeCompare(b.date));
   }, [allocations, year]);
 
-  /* 半年划拨：该年度内的 semi_annual 划拨，按基金和日期分组 */
-  const semiAnnualAllocations = useMemo(() => {
-    const result: { date: string; amounts: Map<FundType, number> }[] = [];
-    const dateMap = new Map<string, Map<FundType, number>>();
-    for (const a of allocations) {
-      if (
-        a.allocation_type === "semi_annual" &&
-        a.allocation_date >= `${year}-01-01` &&
-        a.allocation_date <= `${year}-12-31`
-      ) {
-        if (!dateMap.has(a.allocation_date)) {
-          dateMap.set(a.allocation_date, new Map());
-        }
-        const fm = dateMap.get(a.allocation_date)!;
-        fm.set(a.fund_type, (fm.get(a.fund_type) ?? 0) + Number(a.amount));
-      }
-    }
-    dateMap.forEach((amounts, date) => {
-      result.push({ date, amounts });
-    });
-    result.sort((a, b) => a.date.localeCompare(b.date));
-    return result;
-  }, [allocations, year]);
 
   /* 收入月度汇总 */
   const incomeMonthly = useMemo(() => {
@@ -278,14 +391,14 @@ export default function ReportClient() {
   /* CSV 导出 */
   function exportCSV() {
     const BOM = "\uFEFF";
-    const header = ["类别", "基金类别", "年初预算", "年初余额", ...MONTHS.map((m) => `${m}月`), "1-12月汇总", "使用总额占预算比例"];
+    const header = ["类别", "基金类别", "年初预算", "年初余额", ...MONTHS.map((m) => `${m}月`), "1-12月汇总", "使用总额占预算比例", "年末余额"];
     const rows: string[][] = [header];
 
     const fy = (fen: number) => fen === 0 ? "" : (fen / 100).toFixed(2);
 
     /* 收入 */
     const incTotal = incomeMonthly.reduce((a, b) => a + b, 0);
-    rows.push(["实收", "运营管理", "", "", ...MONTHS.map((m) => fy(incomeMonthly[m - 1])), fy(incTotal), ""]);    
+    rows.push(["实收", "运营管理", "", "", ...MONTHS.map((m) => fy(incomeMonthly[m - 1])), fy(incTotal), "", ""]);    
 
     /* 支出 */
     for (const group of fundGroups) {
@@ -297,29 +410,57 @@ export default function ReportClient() {
           ...MONTHS.map((m) => fy(getCatMonth(cat.id, m))),
           fy(catTotal),
           catBudget > 0 ? pct(catTotal, catBudget) : "",
+          "",
         ]);
       }
       /* 汇总行 */
       const gBudget = getFundBudgetTotal(group.cats);
       const gTotal = getFundYearTotal(group.cats);
       const openBal = openingBalanceMap.get(group.fundType) ?? 0;
+      const endBal = endingBalanceMap.get(group.fundType) ?? 0;
       rows.push([
         `汇总`, group.label, fy(gBudget), fy(openBal),
         ...MONTHS.map((m) => fy(getFundMonthTotal(group.cats, m))),
         fy(gTotal),
         gBudget > 0 ? pct(gTotal, gBudget) : "",
+        fy(endBal),
       ]);
+
+      /* 划拨划入 / 划出行 */
+      const isJhGroup = group.fundType === "jh_operations";
+      for (const batch of transferBatches) {
+        const inAmt = batch.credited.get(group.fundType) ?? 0;
+        const outAmt = isJhGroup ? batch.batchTotal : 0;
+        const allocMonth = Number(batch.date.split("-")[1]);
+        const typeLabel = batch.type === "adjustment" ? "手动调整" : "半年划拨";
+        if (inAmt > 0) {
+          rows.push([
+            `划入 (${batch.date})`, typeLabel, "", "",
+            ...MONTHS.map((m) => (m === allocMonth ? (inAmt / 100).toFixed(2) : "")),
+            (inAmt / 100).toFixed(2), "", "",
+          ]);
+        }
+        if (outAmt > 0) {
+          rows.push([
+            `划出 (${batch.date})`, typeLabel, "", "",
+            ...MONTHS.map((m) => (m === allocMonth ? (-outAmt / 100).toFixed(2) : "")),
+            (-outAmt / 100).toFixed(2), "", "",
+          ]);
+        }
+      }
     }
 
     /* 支出总计 */
     const allCats = fundGroups.flatMap((g) => g.cats);
     const totalBudget = allCats.reduce((s, c) => s + (budgetMap.get(c.id) ?? 0), 0);
     const totalExpense = allCats.reduce((s, c) => s + getCatYearTotal(c.id), 0);
+    const totalEndBal = ALL_FUND_TYPES.reduce((s, ft) => s + (endingBalanceMap.get(ft) ?? 0), 0);
     rows.push([
       "支出总计", "", fy(totalBudget), "",
       ...MONTHS.map((m) => fy(allCats.reduce((s, c) => s + getCatMonth(c.id, m), 0))),
       fy(totalExpense),
       totalBudget > 0 ? pct(totalExpense, totalBudget) : "",
+      fy(totalEndBal),
     ]);
 
     const csv = BOM + rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
@@ -398,7 +539,7 @@ export default function ReportClient() {
     color: "#333",
   };
 
-  const allocRowStyle: React.CSSProperties = {
+  const allocInStyle: React.CSSProperties = {
     ...tdStyle,
     background: "#e8f5e9",
     fontWeight: 600,
@@ -406,8 +547,16 @@ export default function ReportClient() {
     fontSize: 11,
   };
 
-  /* 总列数 = 类别 + 基金类别 + 年初预算 + 年初余额 + 12月 + 汇总 + 占比 = 18 */
-  const totalCols = 18;
+  const allocOutStyle: React.CSSProperties = {
+    ...tdStyle,
+    background: "#ffebee",
+    fontWeight: 600,
+    color: "#c62828",
+    fontSize: 11,
+  };
+
+  /* 总列数 = 类别 + 基金类别 + 年初预算 + 年初余额 + 12月 + 汇总 + 占比 + 年末余额 = 19 */
+  const totalCols = 19;
 
   /* ---------- 渲染 ---------- */
   return (
@@ -512,6 +661,7 @@ export default function ReportClient() {
                 ))}
                 <th style={{ ...thStyle, minWidth: 80 }}>1-12月汇总</th>
                 <th style={{ ...thStyle, minWidth: 80 }}>使用总额占<br/>预算比例</th>
+                <th style={{ ...thStyle, minWidth: 90 }}>年末余额</th>
               </tr>
             </thead>
             <tbody>
@@ -539,6 +689,7 @@ export default function ReportClient() {
                   {fenToYuan(incomeMonthly.reduce((a, b) => a + b, 0))}
                 </td>
                 <td style={tdStyle}></td>
+                <td style={tdStyle}></td>
               </tr>
 
               {/* ===== 支出 ===== */}
@@ -552,6 +703,8 @@ export default function ReportClient() {
                 const groupBudget = getFundBudgetTotal(group.cats);
                 const groupYearTotal = getFundYearTotal(group.cats);
                 const openBal = openingBalanceMap.get(group.fundType) ?? 0;
+                const endBal = endingBalanceMap.get(group.fundType) ?? 0;
+                const isJh = group.fundType === "jh_operations";
 
                 return (
                   <React.Fragment key={group.fundType}>
@@ -583,6 +736,7 @@ export default function ReportClient() {
                           <td style={{ ...tdStyle, color: catBudget > 0 && catTotal > catBudget ? "#c62828" : "#666" }}>
                             {pct(catTotal, catBudget)}
                           </td>
+                          <td style={tdStyle}></td>
                         </tr>
                       );
                     })}
@@ -604,29 +758,59 @@ export default function ReportClient() {
                       <td style={{ ...subtotalStyle, color: groupBudget > 0 && groupYearTotal > groupBudget ? "#c62828" : "#333" }}>
                         {pct(groupYearTotal, groupBudget)}
                       </td>
+                      <td style={{ ...subtotalStyle, fontWeight: 800, color: endBal < 0 ? "#c62828" : "#1565c0" }}>
+                        {fenToYuan(endBal)}
+                      </td>
                     </tr>
 
-                    {/* 半年划拨行（如有） */}
-                    {semiAnnualAllocations.map((alloc) => {
-                      const amt = alloc.amounts.get(group.fundType) ?? 0;
-                      if (amt === 0) return null;
-                      const allocMonth = Number(alloc.date.split("-")[1]);
+                    {/* 划拨行：划入（绿）与划出（红）分开展示 */}
+                    {transferBatches.map((batch) => {
+                      const inAmt = batch.credited.get(group.fundType) ?? 0;
+                      // 每次划拨的整批金额全部从运营管理池划出，再按比例划入四个基金
+                      const outAmt = isJh ? batch.batchTotal : 0;
+                      if (inAmt === 0 && outAmt === 0) return null;
+                      const allocMonth = Number(batch.date.split("-")[1]);
+                      const typeLabel =
+                        batch.type === "adjustment" ? "手动调整" : "半年划拨";
                       return (
-                        <tr key={`alloc-${group.fundType}-${alloc.date}`}>
-                          <td style={{ ...allocRowStyle, textAlign: "left", paddingLeft: 16, position: "sticky", left: 0, zIndex: 1, background: "#e8f5e9" }}>
-                            划拨 ({alloc.date})
-                          </td>
-                          <td style={allocRowStyle}>{group.label}</td>
-                          <td style={allocRowStyle}></td>
-                          <td style={allocRowStyle}></td>
-                          {MONTHS.map((m) => (
-                            <td key={m} style={allocRowStyle}>
-                              {m === allocMonth ? fenToYuan(amt) : ""}
-                            </td>
-                          ))}
-                          <td style={allocRowStyle}>{fenToYuan(amt)}</td>
-                          <td style={allocRowStyle}></td>
-                        </tr>
+                        <React.Fragment key={`alloc-${group.fundType}-${batch.date}`}>
+                          {inAmt > 0 && (
+                            <tr>
+                              <td style={{ ...allocInStyle, textAlign: "left", paddingLeft: 16, position: "sticky", left: 0, zIndex: 1, background: "#e8f5e9" }}>
+                                划入 ({batch.date})
+                              </td>
+                              <td style={allocInStyle}>{typeLabel}</td>
+                              <td style={allocInStyle}></td>
+                              <td style={allocInStyle}></td>
+                              {MONTHS.map((m) => (
+                                <td key={m} style={allocInStyle}>
+                                  {m === allocMonth ? `+${fenToYuan(inAmt)}` : ""}
+                                </td>
+                              ))}
+                              <td style={allocInStyle}>+{fenToYuan(inAmt)}</td>
+                              <td style={allocInStyle}></td>
+                              <td style={allocInStyle}></td>
+                            </tr>
+                          )}
+                          {outAmt > 0 && (
+                            <tr>
+                              <td style={{ ...allocOutStyle, textAlign: "left", paddingLeft: 16, position: "sticky", left: 0, zIndex: 1, background: "#ffebee" }}>
+                                划出 ({batch.date})
+                              </td>
+                              <td style={allocOutStyle}>{typeLabel}</td>
+                              <td style={allocOutStyle}></td>
+                              <td style={allocOutStyle}></td>
+                              {MONTHS.map((m) => (
+                                <td key={m} style={allocOutStyle}>
+                                  {m === allocMonth ? `-${fenToYuan(outAmt)}` : ""}
+                                </td>
+                              ))}
+                              <td style={allocOutStyle}>-{fenToYuan(outAmt)}</td>
+                              <td style={allocOutStyle}></td>
+                              <td style={allocOutStyle}></td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </React.Fragment>
@@ -638,6 +822,7 @@ export default function ReportClient() {
                 const allExpenseCats = fundGroups.flatMap((g) => g.cats);
                 const totalBudget = allExpenseCats.reduce((s, c) => s + (budgetMap.get(c.id) ?? 0), 0);
                 const totalExpense = allExpenseCats.reduce((s, c) => s + getCatYearTotal(c.id), 0);
+                const totalEndBal = ALL_FUND_TYPES.reduce((s, ft) => s + (endingBalanceMap.get(ft) ?? 0), 0);
                 return (
                   <tr>
                     <td style={{ ...subtotalStyle, textAlign: "left", position: "sticky", left: 0, zIndex: 1, background: "#fff3e0", fontWeight: 800, fontSize: 13 }}>
@@ -655,6 +840,9 @@ export default function ReportClient() {
                     <td style={{ ...subtotalStyle, background: "#fff3e0", color: totalBudget > 0 && totalExpense > totalBudget ? "#c62828" : "#333" }}>
                       {pct(totalExpense, totalBudget)}
                     </td>
+                    <td style={{ ...subtotalStyle, background: "#fff3e0", fontWeight: 800, color: totalEndBal < 0 ? "#c62828" : "#1565c0" }}>
+                      {fenToYuan(totalEndBal)}
+                    </td>
                   </tr>
                 );
               })()}
@@ -664,10 +852,21 @@ export default function ReportClient() {
       )}
 
       {/* 图例说明 */}
-      {!loading && semiAnnualAllocations.length > 0 && (
-        <div style={{ marginTop: 16, padding: "10px 14px", background: "#f5f5f5", borderRadius: 8, fontSize: 12, color: "#555" }}>
-          <span style={{ display: "inline-block", width: 14, height: 14, background: "#e8f5e9", border: "1px solid #a5d6a7", borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
-          绿色行表示基金半年划拨记录（通常在 6/30 和 12/31 进行）
+      {!loading && (
+        <div style={{ marginTop: 16, padding: "10px 14px", background: "#f5f5f5", borderRadius: 8, fontSize: 12, color: "#555", lineHeight: 2 }}>
+          {transferBatches.length > 0 && (
+            <>
+              <span style={{ display: "inline-block", width: 14, height: 14, background: "#e8f5e9", border: "1px solid #a5d6a7", borderRadius: 3, verticalAlign: "middle", marginRight: 6 }} />
+              绿色行＝划入金额；
+              <span style={{ display: "inline-block", width: 14, height: 14, background: "#ffebee", border: "1px solid #ef9a9a", borderRadius: 3, verticalAlign: "middle", margin: "0 6px 0 10px" }} />
+              红色行＝划出金额。划拨是资金池内部转账：整批金额从运营管理划出，再按 5:2:2:1 划入四个基金，四基金余额总和不变。
+              <br />
+            </>
+          )}
+          年初余额＝上年末结转余额（期初余额 + 截至本年 1 月 1 日的划拨净额 + 期初日后至上年末的收支）；
+          年末余额＝年初余额 + 本年划拨净额 + 本年收入（仅运营管理）− 本年该基金支出。
+          <br />
+          余额列按全部支出类别计算（含未设预算的类别），因此可能与上方「汇总」行的口径略有差异。
         </div>
       )}
 
