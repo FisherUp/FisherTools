@@ -53,11 +53,12 @@ export type FundAllocation = {
 /** 每个基金的余额摘要 */
 export type FundBalanceSummary = {
   fund_type: FundType;
-  total_allocated: number;  // 划拨合计（分）
-  total_income: number;     // 期初日期后收入合计（分）；仅 jh_operations 为非零，其余基金始终为 0
-  total_expense: number;    // 该基金下支出合计（分）
-  balance: number;          // 运营管理：total_allocated + total_income - total_expense
-                            // 其他基金：total_allocated - total_expense
+  total_allocated: number;       // 划入合计（分）：该基金历次被划拨到的金额
+  total_transferred_out: number; // 划出合计（分）：仅 jh_operations 非零，等于历次非期初划拨的整批总额
+  total_income: number;          // 期初日期后收入合计（分）；仅 jh_operations 为非零，其余基金始终为 0
+  total_expense: number;         // 该基金下支出合计（分）
+  balance: number;               // 运营管理：total_allocated - total_transferred_out + total_income - total_expense
+                                 // 其他基金：total_allocated - total_expense
 };
 
 /** 划拨建议 */
@@ -228,8 +229,15 @@ export async function fetchAllocationSuggestion(
 
 // -------------------------------------------------------
 // 计算各基金余额
-// 业务规则：只扮减期初余额日期（最早 opening_balance 日期）当天及之后的支出
-// 因为期初余额已经考虑了厂史支出情况
+//
+// 业务规则：
+//   1. 所有收入先进入运营管理（jh_operations）资金池。
+//   2. 划拨是「池内转账」而非新增资金：一次非期初划拨（semi_annual / adjustment）
+//      的整批金额全部从运营管理池划出，再按比例划入四个基金（运营管理自身那份即回流）。
+//      因此运营管理需扣减整批划拨总额，保证划拨前后四基金余额之和不变。
+//   3. 期初余额（opening_balance）是各基金的起始资金，不是从池中转出，不参与扣减。
+//   4. 只统计期初余额日期（最早 opening_balance 日期）当天及之后的收支，
+//      因为期初余额已经包含了此前的历史收支结果。
 // -------------------------------------------------------
 export async function fetchFundBalances(
   orgId: string
@@ -252,7 +260,7 @@ export async function fetchFundBalances(
   // 1. 读取所有划拨记录，按基金聚合
   const { data: allocData, error: allocErr } = await supabase
     .from("fund_allocations")
-    .select("fund_type, amount")
+    .select("fund_type, amount, allocation_type")
     .eq("org_id", orgId);
 
   if (allocErr) throw new Error("读取划拨数据失败：" + allocErr.message);
@@ -300,9 +308,16 @@ export async function fetchFundBalances(
     totalExpense[ft] = 0;
   }
 
+  // 运营管理池的划出总额：所有非期初划拨的整批金额之和
+  let jhTransferredOut = 0;
+
   for (const row of allocData ?? []) {
+    const amt = Number(row.amount) || 0;
     if (row.fund_type in totalAllocated) {
-      totalAllocated[row.fund_type] += Number(row.amount) ?? 0;
+      totalAllocated[row.fund_type] += amt;
+    }
+    if (row.allocation_type !== "opening_balance") {
+      jhTransferredOut += amt;
     }
   }
 
@@ -317,16 +332,18 @@ export async function fetchFundBalances(
   return ALL_FUND_TYPES.map((ft) => {
     const allocated = totalAllocated[ft];
     const expense = totalExpense[ft];
-    // JH运萧：余额包含期初日期后的全部收入（未分配部分属于 JH池）
-    const income = ft === "jh_operations" ? totalIncomeSinceOpening : 0;
+    const isJh = ft === "jh_operations";
+    // 运营管理：余额包含期初日期后的全部收入（未划拨部分仍留在运营池）
+    const income = isJh ? totalIncomeSinceOpening : 0;
+    // 运营管理：每次划拨的整批金额都从池中划出（自身那份通过 allocated 回流）
+    const transferredOut = isJh ? jhTransferredOut : 0;
     return {
       fund_type: ft,
       total_allocated: allocated,
+      total_transferred_out: transferredOut,
       total_income: income,
       total_expense: expense,
-      balance: ft === "jh_operations"
-        ? allocated + income - expense
-        : allocated - expense,
+      balance: allocated - transferredOut + income - expense,
     };
   });
 }
