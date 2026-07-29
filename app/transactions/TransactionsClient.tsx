@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import jsPDF from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchUserDisplayMap, resolveUserDisplay } from "../../lib/services/userDisplay";
 import { FUND_LABELS, type FundType } from "../../lib/services/fundService";
+import { exportTablePdf } from "../../lib/utils/pdfExport";
 
 type Row = {
   id: string;
@@ -86,28 +86,6 @@ function downloadTextFile(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-/** ✅ 关键：稳定读取大字体（Noto CJK 很大），不要用 btoa(binary) 那套 */
-async function fetchAsBase64Stable(url: string): Promise<string> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`读取字体失败：${res.status} ${res.statusText}（${url}）`);
-  const blob = await res.blob();
-
-  const base64: string = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("FileReader 读取字体失败"));
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      // data:font/otf;base64,XXXX
-      const idx = result.indexOf("base64,");
-      if (idx < 0) reject(new Error("字体 DataURL 格式异常"));
-      else resolve(result.slice(idx + "base64,".length));
-    };
-    reader.readAsDataURL(blob);
-  });
-
-  return base64;
-}
-
 function fmtDateTime(dt: Date) {
   const y = dt.getFullYear();
   const m = String(dt.getMonth() + 1).padStart(2, "0");
@@ -175,6 +153,9 @@ export default function TransactionsClient() {
 
   // ✅ members 映射：id -> name（用于显示经手人）
   const [memberMap, setMemberMap] = useState<Map<string, string>>(new Map());
+
+  // ✅ 附件数量映射：transaction_id -> 张数（用于列表 📎 标识）
+  const [attachCountMap, setAttachCountMap] = useState<Map<string, number>>(new Map());
 
   // ✅ users 映射：id -> display（用于显示创建/修改人）
   const [userDisplayMap, setUserDisplayMap] = useState<Map<string, string>>(new Map());
@@ -292,6 +273,31 @@ export default function TransactionsClient() {
         : [];
 
       setRows(list);
+
+      // ✅ 批量查附件数量，让列表一眼能看出哪条有票据
+      if (list.length > 0) {
+        const { data: attData, error: attErr } = await supabase
+          .from("attachments")
+          .select("transaction_id")
+          .in(
+            "transaction_id",
+            list.map((r) => r.id)
+          );
+
+        if (attErr) {
+          console.warn("加载附件数量失败：", attErr.message);
+          setAttachCountMap(new Map());
+        } else {
+          const counts = new Map<string, number>();
+          (attData ?? []).forEach((a: any) => {
+            const k = String(a.transaction_id);
+            counts.set(k, (counts.get(k) ?? 0) + 1);
+          });
+          setAttachCountMap(counts);
+        }
+      } else {
+        setAttachCountMap(new Map());
+      }
 
       const userIds = Array.from(
         new Set(list.flatMap((r) => [r.created_by, r.updated_by]).filter(Boolean) as string[])
@@ -529,6 +535,60 @@ export default function TransactionsClient() {
     downloadTextFile(`月度汇总_${month}.csv`, csv);
   };
 
+  // ✅ 月度汇总（按类别）PDF
+  const exportMonthlySummaryPdf = async () => {
+    if (rows.length === 0) {
+      alert("本月暂无数据");
+      return;
+    }
+
+    const map = new Map<string, { income: number; expense: number }>();
+    for (const r of rows) {
+      const cat = r.categories?.name ?? "未分类";
+      if (!map.has(cat)) map.set(cat, { income: 0, expense: 0 });
+      const item = map.get(cat)!;
+      if (r.direction === "income") item.income += r.amount;
+      else item.expense += r.amount;
+    }
+
+    const entries = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+    await exportTablePdf({
+      filename: `月度汇总_${month}.pdf`,
+      title: `月度收支汇总（按类别）· ${month}`,
+      meta: [
+        { label: "组织", value: orgName || (orgId ? orgId.slice(0, 8) + "…" : "-") },
+        { label: "导出人", value: userEmail || "-" },
+        { label: "导出时间", value: fmtDateTime(new Date()) },
+      ],
+      columns: [
+        { header: "类别", width: 2 },
+        { header: "收入合计（元）", width: 1.2, align: "right" },
+        { header: "支出合计（元）", width: 1.2, align: "right" },
+        { header: "净额（元）", width: 1.2, align: "right" },
+      ],
+      rows: entries.map(([cat, v]) => {
+        const net = v.income - v.expense;
+        return [
+          cat,
+          { text: fenToYuan(v.income), align: "right" as const },
+          { text: fenToYuan(v.expense), align: "right" as const },
+          {
+            text: fenToYuan(net),
+            align: "right" as const,
+            bold: true,
+            color: net >= 0 ? "#15803d" : "#b91c1c",
+          },
+        ];
+      }),
+      summary: [
+        { label: "收入合计", value: `¥${formatYuanFromFen(summary.income)}` },
+        { label: "支出合计", value: `¥${formatYuanFromFen(summary.expense)}` },
+        { label: "净额", value: `¥${formatYuanFromFen(summary.net)}` },
+      ],
+    });
+  };
+
   // ✅ 年度汇总（12 个月）CSV
   const exportYearlySummaryCsv = async () => {
     const year = month.slice(0, 4);
@@ -583,138 +643,75 @@ export default function TransactionsClient() {
     }
   };
 
-  /** ✅ PDF导出：中文不乱码 + 不可编辑(至少不可轻易编辑) + 包含导出信息 */
+  /**
+   * ✅ PDF 导出（中文零乱码）
+   *
+   * 旧实现把 16MB 的 NotoSansCJKsc-Regular.otf 塞进 jsPDF —— 该字体是 CFF 轮廓，
+   * jsPDF 只支持 TrueType 轮廓，所以必然出现方块/乱码，而且每次导出都要下载 16MB。
+   * 现在改为 lib/utils/pdfExport 的离屏 DOM 光栅化方案：中文由系统字体渲染，永不乱码。
+   */
   const exportPdf = async () => {
     if (!rows || rows.length === 0) {
       alert("本月暂无流水可导出");
       return;
     }
 
-    // ⚠️ 这里的路径/文件名必须与你 public 目录一致
-    const fontBase64 = await fetchAsBase64Stable("/fonts/NotoSansCJKsc-Regular.otf");
-
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-
-    doc.addFileToVFS("NotoSansCJKsc-Regular.otf", fontBase64);
-    doc.addFont("NotoSansCJKsc-Regular.otf", "NotoSansCJK", "normal");
-    doc.setFont("NotoSansCJK", "normal");
-
-    const now = new Date();
-
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const margin = 36;
-    const lineH = 18;
-
-    let y = margin;
-
-    // 标题区
-    doc.setFontSize(16);
-    doc.text(`流水导出（${month}）`, margin, y);
-    y += lineH;
-
-    doc.setFontSize(10);
-    doc.text(`导出人：${userEmail || "-"}`, margin, y);
-    y += lineH;
-    doc.text(`角色：${userRole || "-"}`, margin, y);
-    y += lineH;
-    doc.text(`组织：${orgName || (orgId ? orgId.slice(0, 8) + "…" : "-")}`, margin, y);
-    y += lineH;
-    doc.text(`导出时间：${fmtDateTime(now)}`, margin, y);
-    y += lineH;
-
-    y += 6;
-    doc.line(margin, y, pageW - margin, y);
-    y += lineH;
-
-    // 列布局（A4 宽度有限，尽量紧凑）
-    doc.setFontSize(9);
-
-    const cols = {
-      date: margin,
-      dir: margin + 70,
-      amt: margin + 120,
-      cat: margin + 190,
-      acc: margin + 265,
-      h1: margin + 355,
-      h2: margin + 425,
-      desc: margin + 495,
-    };
-
-    const maxDescWidth = pageW - margin - cols.desc;
-
-    // 表头
-    doc.text("日期", cols.date, y);
-    doc.text("收支", cols.dir, y);
-    doc.text("金额", cols.amt, y);
-    doc.text("类别", cols.cat, y);
-    doc.text("账户", cols.acc, y);
-    doc.text("经手1", cols.h1, y);
-    doc.text("经手2", cols.h2, y);
-    doc.text("备注", cols.desc, y);
-    y += 10;
-    doc.line(margin, y, pageW - margin, y);
-    y += lineH;
-
-    const safeText = (s: any) => String(s ?? "");
-
-    for (const r of rows) {
-      const date = safeText(r.date);
-      const direction = r.direction === "income" ? "收入" : "支出";
-      const amountYuan = ((Number(r.amount) || 0) / 100).toFixed(2);
-      const categoryName = safeText(r.categories?.name ?? "-");
-      const accountText = r.accounts
-        ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）`
-        : "-";
-
-      const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "-" : "-";
-      const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "-" : "-";
-      const desc = safeText(r.description ?? "");
-
-      // 换页
-      if (y > pageH - margin) {
-        doc.addPage();
-        doc.setFont("NotoSansCJK", "normal"); // ✅ 修正：不要写错字体名
-        doc.setFontSize(9);
-        y = margin;
-
-        // 新页重画表头
-        doc.text("日期", cols.date, y);
-        doc.text("收支", cols.dir, y);
-        doc.text("金额", cols.amt, y);
-        doc.text("类别", cols.cat, y);
-        doc.text("账户", cols.acc, y);
-        doc.text("经手1", cols.h1, y);
-        doc.text("经手2", cols.h2, y);
-        doc.text("备注", cols.desc, y);
-        y += 10;
-        doc.line(margin, y, pageW - margin, y);
-        y += lineH;
-      }
-
-      // 账户列 & 备注列可能换行
-      const accLines = doc.splitTextToSize(safeText(accountText), cols.h1 - cols.acc - 6);
-      const descLines = doc.splitTextToSize(desc, maxDescWidth);
-
-      const usedLines = Math.max(
-        1,
-        Array.isArray(accLines) ? accLines.length : 1,
-        Array.isArray(descLines) ? descLines.length : 1
-      );
-
-      doc.text(date, cols.date, y);
-      doc.text(direction, cols.dir, y);
-      doc.text(amountYuan, cols.amt, y);
-      doc.text(categoryName, cols.cat, y);
-      doc.text(accLines, cols.acc, y);
-      doc.text(String(h1), cols.h1, y);
-      doc.text(String(h2), cols.h2, y);
-      doc.text(descLines, cols.desc, y);
-
-      y += lineH * usedLines;
-    }
-
-    doc.save(`流水_${month}.pdf`);
+    await exportTablePdf({
+      filename: `流水明细_${month}.pdf`,
+      title: `收支流水明细 · ${month}`,
+      subtitle: `统计区间：${fromDate} ～ ${toDate}（不含 ${toDate}）`,
+      orientation: "landscape",
+      meta: [
+        { label: "组织", value: orgName || (orgId ? orgId.slice(0, 8) + "…" : "-") },
+        { label: "导出人", value: userEmail || "-" },
+        { label: "角色", value: userRole || "-" },
+        { label: "导出时间", value: fmtDateTime(new Date()) },
+      ],
+      columns: [
+        { header: "日期", width: 1.1 },
+        { header: "收/支", width: 0.6, align: "center" },
+        { header: "金额(元)", width: 1.1, align: "right" },
+        { header: "类别", width: 1.3 },
+        { header: "基金", width: 1 },
+        { header: "账户", width: 1.4 },
+        { header: "经手人1", width: 0.9 },
+        { header: "经手人2", width: 0.9 },
+        { header: "备注", width: 2.4 },
+        { header: "票据", width: 0.6, align: "center" },
+      ],
+      rows: rows.map((r) => {
+        const isIncome = r.direction === "income";
+        const attCount = attachCountMap.get(r.id) ?? 0;
+        return [
+          r.date,
+          {
+            text: isIncome ? "收入" : "支出",
+            align: "center" as const,
+            color: isIncome ? "#15803d" : "#b91c1c",
+            bold: true,
+          },
+          {
+            text: formatYuanFromFen(r.amount),
+            align: "right" as const,
+            bold: true,
+            color: isIncome ? "#15803d" : "#b91c1c",
+          },
+          r.categories?.name ?? "-",
+          r.categories?.fund_type ? FUND_LABELS[r.categories.fund_type] : "—",
+          r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-",
+          r.handler1_id ? memberMap.get(r.handler1_id) ?? "-" : "-",
+          r.handler2_id ? memberMap.get(r.handler2_id) ?? "-" : "-",
+          r.description ?? "",
+          { text: attCount > 0 ? `${attCount}` : "—", align: "center" as const },
+        ];
+      }),
+      summary: [
+        { label: "记录数", value: `${rows.length} 条` },
+        { label: "收入合计", value: `¥${formatYuanFromFen(summary.income)}` },
+        { label: "支出合计", value: `¥${formatYuanFromFen(summary.expense)}` },
+        { label: "净额", value: `¥${formatYuanFromFen(summary.net)}` },
+      ],
+    });
   };
 
   useEffect(() => {
@@ -742,9 +739,9 @@ export default function TransactionsClient() {
   const budgetYear = month.slice(0, 4);
 
   return (
-    <div style={{ maxWidth: 1150, margin: "40px auto", padding: 16 }}>
+    <div className="ft-page">
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>流水列表</h1>
+        <h1 className="ft-title">流水列表</h1>
 
         {userEmail && (
           <div
@@ -824,107 +821,119 @@ export default function TransactionsClient() {
             </button>
           </div>
 
-          <button onClick={reloadAll} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
-            {loading ? "刷新中..." : "刷新"}
+          <button onClick={reloadAll} disabled={loading} className="ft-btn">
+            {loading ? "刷新中..." : "↻ 刷新"}
           </button>
 
-          <button
-            onClick={exportCsv}
-            disabled={loading || rows.length === 0}
-            style={{ padding: "8px 12px", fontWeight: 700 }}
-          >
-            明细CSV
-          </button>
+          <details style={{ position: "relative" }}>
+            <summary
+              className="ft-btn"
+              style={{ listStyle: "none", cursor: "pointer" }}
+            >
+              ⬇ 导出
+            </summary>
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                top: "calc(100% + 6px)",
+                zIndex: 30,
+                background: "#fff",
+                border: "1px solid #e3e8ef",
+                borderRadius: 10,
+                boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
+                padding: 8,
+                display: "grid",
+                gap: 6,
+                minWidth: 190,
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#94a3b8", padding: "2px 6px" }}>PDF（中文不乱码）</div>
+              <button
+                onClick={async () => {
+                  try {
+                    await exportPdf();
+                  } catch (e: any) {
+                    alert("导出PDF失败：" + String(e?.message ?? e));
+                  }
+                }}
+                disabled={loading || rows.length === 0}
+                className="ft-btn ft-btn-sm"
+              >
+                流水明细 PDF
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await exportMonthlySummaryPdf();
+                  } catch (e: any) {
+                    alert("导出PDF失败：" + String(e?.message ?? e));
+                  }
+                }}
+                disabled={loading || rows.length === 0}
+                className="ft-btn ft-btn-sm"
+              >
+                月度汇总 PDF
+              </button>
 
-          <button
-            onClick={exportMonthlySummaryCsv}
-            disabled={loading || rows.length === 0}
-            style={{ padding: "8px 12px", fontWeight: 700 }}
-          >
-            月度汇总CSV
-          </button>
+              <div style={{ fontSize: 11, color: "#94a3b8", padding: "2px 6px", marginTop: 4 }}>CSV</div>
+              <button onClick={exportCsv} disabled={loading || rows.length === 0} className="ft-btn ft-btn-sm">
+                流水明细 CSV
+              </button>
+              <button
+                onClick={exportMonthlySummaryCsv}
+                disabled={loading || rows.length === 0}
+                className="ft-btn ft-btn-sm"
+              >
+                月度汇总 CSV
+              </button>
+              <button onClick={exportYearlySummaryCsv} disabled={loading} className="ft-btn ft-btn-sm">
+                年度汇总 CSV
+              </button>
+            </div>
+          </details>
 
-          <button onClick={exportYearlySummaryCsv} disabled={loading} style={{ padding: "8px 12px", fontWeight: 700 }}>
-            年度汇总CSV
-          </button>
-
-          <button
-            onClick={async () => {
-              try {
-                await exportPdf();
-              } catch (e: any) {
-                alert("导出PDF失败：" + String(e?.message ?? e));
-              }
-            }}
-            disabled={loading || rows.length === 0}
-            style={{ padding: "8px 12px", fontWeight: 700 }}
-          >
-            PDF导出
-          </button>
-
-          <a
-            href={`/transactions/report`}
-            style={{
-              padding: "8px 16px",
-              fontWeight: 700,
-              background: "#1565c0",
-              color: "#fff",
-              borderRadius: 6,
-              textDecoration: "none",
-              fontSize: 13,
-            }}
-          >
+          <a href={`/transactions/report`} className="ft-btn ft-btn-primary">
             年度报表
           </a>
 
           {(userRole === "admin" || userRole === "finance") && (
-            <a href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`} style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a
+              href={`/transactions/new?from_year=${month.split("-")[0]}&from_month=${Number(month.split("-")[1])}`}
+              className="ft-btn ft-btn-primary"
+            >
               + 新增
             </a>
           )}
 
           {userRole === "admin" && (
-            <a href="/members" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a href="/members" className="ft-btn ft-btn-ghost ft-only-desktop">
               经手人管理
             </a>
           )}
 
           {userRole === "admin" && (
-            <a href="/accounts" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a href="/accounts" className="ft-btn ft-btn-ghost ft-only-desktop">
               账户管理
             </a>
           )}
 
           {userRole === "admin" && (
-            <a href="/categories" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a href="/categories" className="ft-btn ft-btn-ghost ft-only-desktop">
               类别管理
             </a>
           )}
 
           {userRole === "admin" && (
-            <a href="/budgets" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a href="/budgets" className="ft-btn ft-btn-ghost ft-only-desktop">
               资源计划
             </a>
           )}
 
           {(userRole === "admin" || userRole === "viewer") && (
-            <a href="/funds" style={{ padding: "8px 12px", fontWeight: 700 }}>
+            <a href="/funds" className="ft-btn ft-btn-ghost">
               🏦 资源池
             </a>
-          )}
-
-          {userRole !== "admin" && (
-            <span
-              style={{
-                padding: "8px 12px",
-                color: "#999",
-                fontSize: 12,
-                cursor: "help",
-              }}
-              title="管理功能仅限管理员使用。如需管理经手人、账户、类别或预算，请联系管理员。"
-            >
-              ℹ️ 管理功能需要管理员权限
-            </span>
           )}
         </div>
       </div>
@@ -933,16 +942,41 @@ export default function TransactionsClient() {
         筛选范围：{fromDate} ～ {toDate}（不含 {toDate}）
       </div>
 
-      <div style={{ display: "flex", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
-        <div style={{ background: "#f5f5f5", padding: 10, borderRadius: 8 }}>
-          收入合计：<b>{formatYuanFromFen(summary.income)}</b> 元
-        </div>
-        <div style={{ background: "#f5f5f5", padding: 10, borderRadius: 8 }}>
-          支出合计：<b>{formatYuanFromFen(summary.expense)}</b> 元
-        </div>
-        <div style={{ background: "#f5f5f5", padding: 10, borderRadius: 8 }}>
-          净额：<b>{formatYuanFromFen(summary.net)}</b> 元
-        </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        {[
+          { label: "收入合计", value: summary.income, color: "#15803d", bg: "#ecfdf5", border: "#bbf7d0" },
+          { label: "支出合计", value: summary.expense, color: "#b91c1c", bg: "#fef2f2", border: "#fecaca" },
+          {
+            label: "净额",
+            value: summary.net,
+            color: summary.net >= 0 ? "#1d4ed8" : "#b91c1c",
+            bg: "#eff6ff",
+            border: "#bfdbfe",
+          },
+          { label: "记录数", value: null, color: "#334155", bg: "#f6f8fa", border: "#e3e8ef" },
+        ].map((c) => (
+          <div
+            key={c.label}
+            style={{
+              background: c.bg,
+              border: `1px solid ${c.border}`,
+              borderRadius: 10,
+              padding: "12px 14px",
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{c.label}</div>
+            <div className="ft-num" style={{ fontSize: 20, fontWeight: 800, color: c.color }}>
+              {c.value === null ? `${rows.length} 条` : `¥${formatYuanFromFen(c.value)}`}
+            </div>
+          </div>
+        ))}
       </div>
 
       <div style={{ marginBottom: 12 }}>
@@ -1096,13 +1130,14 @@ export default function TransactionsClient() {
         </div>
       )}
 
-      <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
+      <div className="ft-only-desktop" style={{ overflowX: "auto", border: "1px solid #e3e8ef", borderRadius: 10, background: "#fff" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1500 }}>
           <thead>
-            <tr style={{ background: "#fafafa" }}>
+            <tr style={{ background: "#f6f8fa" }}>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>日期</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "60px" }}>收/支</th>
               <th style={{ textAlign: "right", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>金额（元）</th>
+              <th style={{ textAlign: "center", padding: 10, borderBottom: "1px solid #eee", width: "60px" }} title="是否已上传票据附件">票据</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "100px" }}>类别</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "90px" }}>基金</th>
               <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: "120px" }}>账户</th>
@@ -1120,7 +1155,7 @@ export default function TransactionsClient() {
           <tbody>
             {rows.length === 0 && !loading ? (
               <tr>
-                <td colSpan={13} style={{ padding: 14, color: "#666" }}>
+                <td colSpan={15} style={{ padding: 14, color: "#666" }}>
                   本月暂无流水
                 </td>
               </tr>
@@ -1128,6 +1163,7 @@ export default function TransactionsClient() {
               rows.map((r) => {
                 const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "-" : "-";
                 const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "-" : "-";
+                const attCount = attachCountMap.get(r.id) ?? 0;
 
                 return (
                   <tr key={r.id}>
@@ -1141,9 +1177,25 @@ export default function TransactionsClient() {
                         borderBottom: "1px solid #f0f0f0",
                         textAlign: "right",
                         fontWeight: 700,
+                        color: r.direction === "income" ? "#15803d" : "#b91c1c",
                       }}
+                      className="ft-num"
                     >
                       {formatYuanFromFen(r.amount)}
+                    </td>
+                    <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", textAlign: "center" }}>
+                      {attCount > 0 ? (
+                        <span
+                          className="ft-chip ft-chip-info"
+                          title={`已上传 ${attCount} 张票据，点“编辑”可查看`}
+                        >
+                          📎 {attCount}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#cbd5e1" }} title="尚未上传票据">
+                          —
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0" }}>{r.categories?.name ?? "-"}</td>
                     <td style={{ padding: 10, borderBottom: "1px solid #f0f0f0", color: r.categories?.fund_type ? "#555" : "#bbb", fontSize: 12 }}>
@@ -1211,8 +1263,106 @@ export default function TransactionsClient() {
         </table>
       </div>
 
+      {/* ===== 移动端：卡片式列表（宽表格在手机上无法阅读） ===== */}
+      <div className="ft-only-mobile">
+        {rows.length === 0 && !loading ? (
+          <div className="ft-card" style={{ color: "#64748b" }}>本月暂无流水</div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {rows.map((r) => {
+              const isIncome = r.direction === "income";
+              const h1 = r.handler1_id ? memberMap.get(r.handler1_id) ?? "" : "";
+              const h2 = r.handler2_id ? memberMap.get(r.handler2_id) ?? "" : "";
+              const attCount = attachCountMap.get(r.id) ?? 0;
+
+              return (
+                <div key={r.id} className="ft-card" style={{ padding: 12 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span
+                      className={`ft-chip ${isIncome ? "ft-chip-success" : "ft-chip-danger"}`}
+                      style={{ flex: "0 0 auto" }}
+                    >
+                      {isIncome ? "收入" : "支出"}
+                    </span>
+                    <span style={{ fontSize: 13, color: "#64748b" }}>{r.date}</span>
+                    <span
+                      className="ft-num"
+                      style={{
+                        marginLeft: "auto",
+                        fontSize: 18,
+                        fontWeight: 800,
+                        color: isIncome ? "#15803d" : "#b91c1c",
+                      }}
+                    >
+                      {isIncome ? "+" : "-"}¥{formatYuanFromFen(r.amount)}
+                    </span>
+                  </div>
+
+                  <div style={{ marginTop: 8, fontSize: 13, display: "grid", gap: 4 }}>
+                    <div>
+                      <span className="ft-muted">类别：</span>
+                      {r.categories?.name ?? "-"}
+                      {r.categories?.fund_type && (
+                        <span className="ft-chip" style={{ marginLeft: 6 }}>
+                          {FUND_LABELS[r.categories.fund_type]}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="ft-muted">账户：</span>
+                      {r.accounts ? `${r.accounts.name}（${r.accounts.type === "cash" ? "现金" : "银行卡"}）` : "-"}
+                    </div>
+                    {(h1 || h2) && (
+                      <div>
+                        <span className="ft-muted">经手人：</span>
+                        {[h1, h2].filter(Boolean).join(" / ")}
+                      </div>
+                    )}
+                    {!!r.description && (
+                      <div>
+                        <span className="ft-muted">备注：</span>
+                        {r.description}
+                      </div>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 10,
+                      paddingTop: 10,
+                      borderTop: "1px solid #f1f5f9",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    {attCount > 0 ? (
+                      <span className="ft-chip ft-chip-info">📎 {attCount} 张票据</span>
+                    ) : (
+                      <span className="ft-chip">无票据</span>
+                    )}
+
+                    {(userRole === "admin" || userRole === "finance") && (
+                      <a
+                        href={`/transactions/${r.id}/edit?from_year=${month.split("-")[0]}&from_month=${Number(
+                          month.split("-")[1]
+                        )}`}
+                        className="ft-btn ft-btn-sm"
+                        style={{ marginLeft: "auto" }}
+                      >
+                        编辑 / 票据
+                      </a>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div style={{ marginTop: 14, fontSize: 12, color: "#666" }}>
-        金额在数据库中以“分（整数）”存储；导出 CSV 已加 UTF-8 BOM，Excel 打开中文不乱码。
+        金额在数据库中以“分（整数）”存储；导出 CSV 已加 UTF-8 BOM，Excel 打开中文不乱码；PDF 采用页面渲染方式生成，中文不会乱码。
       </div>
     </div>
   );

@@ -1,4 +1,13 @@
 import { supabase } from "../supabaseClient";
+import { uploadReceiptImageFile } from "./imageStorageService";
+
+const RECEIPTS_BUCKET = "receipts";
+const SIGNED_URL_TTL = 300;
+
+/** 草稿附件在 Storage 中的二级目录前缀（与正式流水区分开） */
+function draftFolder(draftId: string) {
+  return `draft_${draftId}`;
+}
 
 // -------------------------------------------------------
 // 草稿收支流水（Draft Transactions）服务层
@@ -113,22 +122,35 @@ export async function fetchDraftById(id: string): Promise<DraftTransaction | nul
   return (data ?? null) as unknown as DraftTransaction | null;
 }
 
-/** 新增草稿 */
-export async function createDraft(orgId: string, input: DraftInput): Promise<void> {
-  const { error } = await supabase.from("draft_transactions").insert({
-    org_id: orgId,
-    entry_type: input.entry_type,
-    date: input.date,
-    amount: input.amount,
-    direction: input.direction,
-    account_id: input.account_id,
-    category_id: input.category_id,
-    handler1_id: input.handler1_id,
-    handler2_id: input.handler2_id,
-    description: input.description,
-    status: "pending",
-  });
+export type DraftAttachment = {
+  id: string;
+  storage_path: string;
+  signed_url: string;
+  created_at: string | null;
+};
+
+/** 新增草稿，返回新草稿 id（便于随后挂附件） */
+export async function createDraft(orgId: string, input: DraftInput): Promise<string> {
+  const { data, error } = await supabase
+    .from("draft_transactions")
+    .insert({
+      org_id: orgId,
+      entry_type: input.entry_type,
+      date: input.date,
+      amount: input.amount,
+      direction: input.direction,
+      account_id: input.account_id,
+      category_id: input.category_id,
+      handler1_id: input.handler1_id,
+      handler2_id: input.handler2_id,
+      description: input.description,
+      status: "pending",
+    })
+    .select("id")
+    .single();
+
   if (error) throw new Error("保存草稿失败：" + error.message);
+  return String(data?.id ?? "");
 }
 
 /** 更新草稿（仅 pending 可改，锁定由数据库触发器兜底） */
@@ -203,6 +225,20 @@ export async function transferDraftToTransaction(
   if (insErr) throw new Error("生成正式流水失败：" + insErr.message);
   const newTxId = inserted?.id as string | undefined;
 
+  // ✅ 票据附件同步迁移：Storage 文件不动，只把归属改到新流水上
+  if (newTxId) {
+    const { error: attErr } = await supabase
+      .from("attachments")
+      .update({ transaction_id: newTxId })
+      .eq("draft_id", draft.id)
+      .eq("org_id", orgId);
+    if (attErr) {
+      throw new Error(
+        "正式流水已生成，但票据附件迁移失败，请人工核对：" + attErr.message
+      );
+    }
+  }
+
   const { error: updErr } = await supabase
     .from("draft_transactions")
     .update({
@@ -220,4 +256,127 @@ export async function transferDraftToTransaction(
       "正式流水已生成，但草稿状态更新失败，请刷新核对，避免重复转移：" + updErr.message
     );
   }
+}
+
+/* ============================================================
+   草稿票据附件
+   附件统一存放在 attachments 表：草稿阶段 draft_id 有值、transaction_id 为空；
+   转移为正式流水后由 transferDraftToTransaction 补上 transaction_id。
+   ============================================================ */
+
+/** 上传草稿票据（自动压缩），返回成功数与错误列表 */
+export async function uploadDraftAttachments(
+  orgId: string,
+  draftId: string,
+  files: File[]
+): Promise<{ okCount: number; savedBytes: number; errors: string[] }> {
+  let okCount = 0;
+  let savedBytes = 0;
+  const errors: string[] = [];
+
+  for (const file of files) {
+    let storagePath = "";
+    try {
+      const uploaded = await uploadReceiptImageFile(orgId, draftFolder(draftId), file);
+      storagePath = uploaded.storagePath;
+      savedBytes += Math.max(0, uploaded.originalBytes - uploaded.uploadedBytes);
+    } catch (e) {
+      errors.push(`${file.name}：${errMsg(e)}`);
+      continue;
+    }
+
+    const { error: insErr } = await supabase.from("attachments").insert({
+      org_id: orgId,
+      draft_id: draftId,
+      transaction_id: null,
+      storage_path: storagePath,
+      file_url: storagePath,
+    });
+
+    if (insErr) {
+      // 写表失败就回滚 Storage 文件，避免产生孤儿文件
+      await supabase.storage.from(RECEIPTS_BUCKET).remove([storagePath]);
+      errors.push(`${file.name}：${insErr.message}`);
+      continue;
+    }
+    okCount += 1;
+  }
+
+  return { okCount, savedBytes, errors };
+}
+
+/** 读取某条草稿的票据（含 5 分钟签名 URL） */
+export async function fetchDraftAttachments(
+  orgId: string,
+  draftId: string
+): Promise<DraftAttachment[]> {
+  const { data, error } = await supabase
+    .from("attachments")
+    .select("id, storage_path, created_at")
+    .eq("draft_id", draftId)
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error("加载草稿票据失败：" + error.message);
+
+  const result: DraftAttachment[] = [];
+  const rows = (data ?? []) as { id: string; storage_path: string | null; created_at: string | null }[];
+  for (const row of rows) {
+    const path = String(row.storage_path ?? "");
+    let signed = "";
+    if (path) {
+      const { data: s } = await supabase.storage
+        .from(RECEIPTS_BUCKET)
+        .createSignedUrl(path, SIGNED_URL_TTL);
+      signed = s?.signedUrl ?? "";
+    }
+    result.push({
+      id: String(row.id),
+      storage_path: path,
+      signed_url: signed,
+      created_at: row.created_at ? String(row.created_at) : null,
+    });
+  }
+  return result;
+}
+
+/** 删除一张草稿票据 */
+export async function deleteDraftAttachment(orgId: string, attachmentId: string, storagePath: string) {
+  if (storagePath) {
+    const { error: stErr } = await supabase.storage.from(RECEIPTS_BUCKET).remove([storagePath]);
+    if (stErr) throw new Error("删除 Storage 文件失败：" + stErr.message);
+  }
+  const { error } = await supabase
+    .from("attachments")
+    .delete()
+    .eq("id", attachmentId)
+    .eq("org_id", orgId);
+  if (error) throw new Error("删除票据记录失败：" + error.message);
+}
+
+/** 批量统计草稿票据数量：draftId -> 张数 */
+export async function fetchDraftAttachmentCounts(
+  orgId: string,
+  draftIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (draftIds.length === 0) return counts;
+
+  const { data, error } = await supabase
+    .from("attachments")
+    .select("draft_id")
+    .eq("org_id", orgId)
+    .in("draft_id", draftIds);
+
+  if (error) {
+    console.warn("加载草稿票据数量失败：", error.message);
+    return counts;
+  }
+
+  for (const row of (data ?? []) as { draft_id: string | null }[]) {
+    const k = String(row.draft_id ?? "");
+    if (!k) continue;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return counts;
 }

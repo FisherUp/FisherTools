@@ -141,9 +141,14 @@ ${categoryDescription}
 }`;
 
   // 7. 调用 Azure OpenAI
+  //    速度优化：纯文字场景优先走 AZURE_OPENAI_FAST_DEPLOYMENT（建议部署 gpt-4.1-mini），
+  //    图片场景优先走 AZURE_OPENAI_VISION_DEPLOYMENT；两者未配置时回退主部署。
   const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
   const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+  const baseDeployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+  const deployment = imageBase64
+    ? process.env.AZURE_OPENAI_VISION_DEPLOYMENT || baseDeployment
+    : process.env.AZURE_OPENAI_FAST_DEPLOYMENT || baseDeployment;
   const apiVersion = process.env.AZURE_OPENAI_API_VERSION || "2025-04-01-preview";
 
   if (!endpoint || !apiKey || !deployment) {
@@ -163,7 +168,7 @@ ${categoryDescription}
           content: [
             {
               type: "image_url",
-              image_url: { url: `data:${imageMimeType};base64,${imageBase64}` },
+              image_url: { url: `data:${imageMimeType};base64,${imageBase64}`, detail: "low" },
             },
             {
               type: "text",
@@ -189,9 +194,10 @@ ${categoryDescription}
           { role: "system", content: systemPrompt },
           userMessage,
         ],
-        temperature: 0.1,
-        max_tokens: 2000,
-        ...(imageBase64 ? {} : { response_format: { type: "json_object" } }),
+        temperature: 0,
+        top_p: 1,
+        max_tokens: 1200,
+        response_format: { type: "json_object" },
       }),
       signal: controller.signal,
     });

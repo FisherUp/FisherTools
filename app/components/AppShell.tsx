@@ -414,15 +414,29 @@ const SHELL_CSS = `
   .app-topbar {
     display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 40;
     background: #0f172a; color: #fff; padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-left: calc(14px + env(safe-area-inset-left));
+    padding-right: calc(14px + env(safe-area-inset-right));
+    box-shadow: 0 1px 8px rgba(15,23,42,.25);
   }
   .app-burger {
-    background: transparent; border: none; color: #fff; font-size: 22px; cursor: pointer; line-height: 1;
+    background: transparent; border: none; color: #fff; font-size: 24px; cursor: pointer;
+    line-height: 1; width: 40px; height: 40px; display: grid; place-items: center;
+    border-radius: 8px;
   }
-  .app-topbar-title { font-size: 15px; font-weight: 800; }
-  .app-sidebar { transform: translateX(-100%); transition: transform .22s ease; }
-  .app-sidebar.open { transform: translateX(0); }
+  .app-burger:active { background: rgba(255,255,255,.12); }
+  .app-topbar-title { font-size: 16px; font-weight: 800; }
+  .app-sidebar {
+    transform: translateX(-100%); transition: transform .22s ease;
+    width: min(84vw, 288px);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .app-sidebar.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,.45); }
+  .app-nav-item { padding: 12px 14px; font-size: 15px; }
   .app-overlay {
     display: block; position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 45;
+    backdrop-filter: blur(1px);
   }
   .app-main { margin-left: 0; }
 }
