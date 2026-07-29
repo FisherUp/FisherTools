@@ -102,8 +102,10 @@ const BUCKET_LABELS: Record<ImageBucket, string> = {
 };
 
 const UPLOAD_OPTIONS: Record<StoredImageKind, CompressOptions> = {
-  receipt: { maxDimension: 1600, quality: 0.76, skipBelowBytes: 350 * 1024 },
-  inventory: { maxDimension: 1000, quality: 0.75, skipBelowBytes: 300 * 1024 },
+  // 票据只需看清金额/抬头，1500px + q0.72 足够；阈值调低到 200KB，
+  // 让手机直出的中等大小照片也参与压缩，尽量省 Supabase 免费额度。
+  receipt: { maxDimension: 1500, quality: 0.72, skipBelowBytes: 200 * 1024 },
+  inventory: { maxDimension: 1000, quality: 0.75, skipBelowBytes: 200 * 1024 },
 };
 
 const LEGACY_OPTIONS: Record<StoredImageKind, CompressOptions> = {

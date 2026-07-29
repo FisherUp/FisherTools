@@ -8,6 +8,7 @@ import {
   type FundType,
   ALL_FUND_TYPES,
 } from "../../../lib/services/fundService";
+import { exportTablePdf, type PdfCell, type PdfColumn } from "../../../lib/utils/pdfExport";
 
 /* ---------- 类型 ---------- */
 type CategoryRow = {
@@ -87,6 +88,7 @@ export default function ReportClient() {
   const router = useRouter();
   const [year, setYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [orgId, setOrgId] = useState("");
 
   /* 原始数据 */
@@ -473,6 +475,187 @@ export default function ReportClient() {
     URL.revokeObjectURL(url);
   }
 
+  /* PDF 导出（中文由浏览器渲染，绝不乱码） */
+  async function exportPDF() {
+    const fy = (fen: number) => (fen === 0 ? "" : (fen / 100).toFixed(2));
+
+    const columns: PdfColumn[] = [
+      { header: "类别", width: 2 },
+      { header: "基金类别", width: 1.4 },
+      { header: "年初预算", width: 1.2, align: "right" },
+      { header: "年初余额", width: 1.2, align: "right" },
+      ...MONTHS.map((m) => ({ header: `${m}月`, width: 1, align: "right" as const })),
+      { header: "1-12月汇总", width: 1.3, align: "right" },
+      { header: "占预算比", width: 1.1, align: "right" },
+      { header: "年末余额", width: 1.3, align: "right" },
+    ];
+
+    const rows: PdfCell[][] = [];
+
+    /* 收入 */
+    const incTotal = incomeMonthly.reduce((a, b) => a + b, 0);
+    rows.push([
+      { text: "实收", bold: true, background: "#e3f2fd" },
+      { text: "运营管理", background: "#e3f2fd" },
+      { text: "", background: "#e3f2fd" },
+      { text: "", background: "#e3f2fd" },
+      ...MONTHS.map((m) => ({
+        text: fy(incomeMonthly[m - 1]),
+        align: "right" as const,
+        background: "#e3f2fd",
+      })),
+      { text: fy(incTotal), align: "right" as const, bold: true, background: "#e3f2fd" },
+      { text: "", background: "#e3f2fd" },
+      { text: "", background: "#e3f2fd" },
+    ]);
+
+    /* 支出 */
+    for (const group of fundGroups) {
+      for (const cat of group.cats) {
+        const catBudget = budgetMap.get(cat.id) ?? 0;
+        const catTotal = getCatYearTotal(cat.id);
+        rows.push([
+          cat.name,
+          group.label,
+          { text: fy(catBudget), align: "right" as const },
+          "",
+          ...MONTHS.map((m) => ({ text: fy(getCatMonth(cat.id, m)), align: "right" as const })),
+          { text: fy(catTotal), align: "right" as const },
+          { text: catBudget > 0 ? pct(catTotal, catBudget) : "", align: "right" as const },
+          "",
+        ]);
+      }
+
+      const gBudget = getFundBudgetTotal(group.cats);
+      const gTotal = getFundYearTotal(group.cats);
+      const openBal = openingBalanceMap.get(group.fundType) ?? 0;
+      const endBal = endingBalanceMap.get(group.fundType) ?? 0;
+      rows.push([
+        { text: "汇总", bold: true, background: "#fffde7" },
+        { text: group.label, bold: true, background: "#fffde7" },
+        { text: fy(gBudget), align: "right" as const, bold: true, background: "#fffde7" },
+        { text: fy(openBal), align: "right" as const, bold: true, background: "#fffde7" },
+        ...MONTHS.map((m) => ({
+          text: fy(getFundMonthTotal(group.cats, m)),
+          align: "right" as const,
+          bold: true,
+          background: "#fffde7",
+        })),
+        { text: fy(gTotal), align: "right" as const, bold: true, background: "#fffde7" },
+        {
+          text: gBudget > 0 ? pct(gTotal, gBudget) : "",
+          align: "right" as const,
+          bold: true,
+          background: "#fffde7",
+        },
+        { text: fy(endBal), align: "right" as const, bold: true, background: "#fffde7" },
+      ]);
+
+      /* 划入 / 划出 */
+      const isJhGroup = group.fundType === "jh_operations";
+      for (const batch of transferBatches) {
+        const inAmt = batch.credited.get(group.fundType) ?? 0;
+        const outAmt = isJhGroup ? batch.batchTotal : 0;
+        const allocMonth = Number(batch.date.split("-")[1]);
+        const typeLabel = batch.type === "adjustment" ? "手动调整" : "半年划拨";
+
+        if (inAmt > 0) {
+          rows.push([
+            { text: `划入 (${batch.date})`, background: "#e8f5e9", color: "#2e7d32" },
+            { text: typeLabel, background: "#e8f5e9", color: "#2e7d32" },
+            { text: "", background: "#e8f5e9" },
+            { text: "", background: "#e8f5e9" },
+            ...MONTHS.map((m) => ({
+              text: m === allocMonth ? `+${(inAmt / 100).toFixed(2)}` : "",
+              align: "right" as const,
+              background: "#e8f5e9",
+              color: "#2e7d32",
+            })),
+            {
+              text: `+${(inAmt / 100).toFixed(2)}`,
+              align: "right" as const,
+              background: "#e8f5e9",
+              color: "#2e7d32",
+              bold: true,
+            },
+            { text: "", background: "#e8f5e9" },
+            { text: "", background: "#e8f5e9" },
+          ]);
+        }
+
+        if (outAmt > 0) {
+          rows.push([
+            { text: `划出 (${batch.date})`, background: "#ffebee", color: "#c62828" },
+            { text: typeLabel, background: "#ffebee", color: "#c62828" },
+            { text: "", background: "#ffebee" },
+            { text: "", background: "#ffebee" },
+            ...MONTHS.map((m) => ({
+              text: m === allocMonth ? `-${(outAmt / 100).toFixed(2)}` : "",
+              align: "right" as const,
+              background: "#ffebee",
+              color: "#c62828",
+            })),
+            {
+              text: `-${(outAmt / 100).toFixed(2)}`,
+              align: "right" as const,
+              background: "#ffebee",
+              color: "#c62828",
+              bold: true,
+            },
+            { text: "", background: "#ffebee" },
+            { text: "", background: "#ffebee" },
+          ]);
+        }
+      }
+    }
+
+    /* 支出总计 */
+    const allCats = fundGroups.flatMap((g) => g.cats);
+    const totalBudget = allCats.reduce((s, c) => s + (budgetMap.get(c.id) ?? 0), 0);
+    const totalExpense = allCats.reduce((s, c) => s + getCatYearTotal(c.id), 0);
+    const totalEndBal = ALL_FUND_TYPES.reduce((s, ft) => s + (endingBalanceMap.get(ft) ?? 0), 0);
+    rows.push([
+      { text: "支出总计", bold: true, background: "#fff8e1" },
+      { text: "", background: "#fff8e1" },
+      { text: fy(totalBudget), align: "right" as const, bold: true, background: "#fff8e1" },
+      { text: "", background: "#fff8e1" },
+      ...MONTHS.map((m) => ({
+        text: fy(allCats.reduce((s, c) => s + getCatMonth(c.id, m), 0)),
+        align: "right" as const,
+        bold: true,
+        background: "#fff8e1",
+      })),
+      { text: fy(totalExpense), align: "right" as const, bold: true, background: "#fff8e1" },
+      {
+        text: totalBudget > 0 ? pct(totalExpense, totalBudget) : "",
+        align: "right" as const,
+        bold: true,
+        background: "#fff8e1",
+      },
+      { text: fy(totalEndBal), align: "right" as const, bold: true, background: "#fff8e1" },
+    ]);
+
+    await exportTablePdf({
+      filename: `年度预算执行报表_${year}.pdf`,
+      title: `${year} 年度预算执行报表`,
+      subtitle: "金额单位：元；空白表示 0",
+      orientation: "landscape",
+      paper: "a3",
+      fontSize: 8,
+      meta: [
+        { label: "导出时间", value: new Date().toLocaleString("zh-CN", { hour12: false }) },
+        { label: "口径", value: "年初余额=上年末结转；年末余额=年初余额+本年划拨净额+本年收入(仅运营管理)−本年支出" },
+      ],
+      columns,
+      rows,
+      summary: [
+        { label: "年度收入合计", value: `¥${(incTotal / 100).toFixed(2)}` },
+        { label: "年度支出合计", value: `¥${(totalExpense / 100).toFixed(2)}` },
+        { label: "年末余额合计", value: `¥${(totalEndBal / 100).toFixed(2)}` },
+      ],
+    });
+  }
+
   /* 辅助：获取某类别某月金额 */
   function getCatMonth(catId: string, month: number): number {
     return txMap.get(`${catId}|${month}`) ?? 0;
@@ -580,7 +763,35 @@ export default function ReportClient() {
 
         <div style={{ flex: 1 }} />
 
-        {/* CSV 导出 */}
+        {/* 导出 */}
+        <button
+          onClick={async () => {
+            setPdfBusy(true);
+            try {
+              await exportPDF();
+            } catch (e: any) {
+              alert("导出 PDF 失败：" + String(e?.message ?? e));
+            } finally {
+              setPdfBusy(false);
+            }
+          }}
+          disabled={loading || pdfBusy}
+          style={{
+            padding: "8px 16px",
+            fontWeight: 600,
+            cursor: loading || pdfBusy ? "not-allowed" : "pointer",
+            border: "1px solid #c62828",
+            borderRadius: 6,
+            background: "#ffebee",
+            color: "#c62828",
+            fontSize: 13,
+            opacity: loading || pdfBusy ? 0.5 : 1,
+          }}
+          title="A3 横向 PDF，中文不会乱码"
+        >
+          {pdfBusy ? "生成中…" : "导出 PDF"}
+        </button>
+
         <button
           onClick={exportCSV}
           disabled={loading}

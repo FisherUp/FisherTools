@@ -9,6 +9,7 @@ import {
   deleteDraft,
   errMsg,
   fetchDraftTransactions,
+  fetchDraftAttachmentCounts,
   getMyProfile,
   transferDraftToTransaction,
   type DraftEntryType,
@@ -49,6 +50,7 @@ export default function DraftsClient() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>("");
   const [msg, setMsg] = useState("");
+  const [attachCounts, setAttachCounts] = useState<Map<string, number>>(new Map());
 
   const [filterType, setFilterType] = useState<"all" | DraftEntryType>("all");
   const [filterStatus, setFilterStatus] = useState<"all" | DraftStatus>("all");
@@ -71,6 +73,13 @@ export default function DraftsClient() {
       ]);
 
       setRows(drafts);
+
+      setAttachCounts(
+        await fetchDraftAttachmentCounts(
+          profile.orgId,
+          drafts.map((d) => d.id)
+        )
+      );
 
       const memMap: Record<string, string> = {};
       (memData as Member[] | null)?.forEach((m) => {
@@ -255,6 +264,7 @@ export default function DraftsClient() {
               <th style={th}>日期</th>
               <th style={th}>收/支</th>
               <th style={{ ...th, textAlign: "right" }}>金额</th>
+              <th style={{ ...th, textAlign: "center" }}>票据</th>
               <th style={th}>类别</th>
               <th style={th}>账户</th>
               <th style={th}>经手人</th>
@@ -266,7 +276,7 @@ export default function DraftsClient() {
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td style={{ ...td, textAlign: "center", color: "#999", padding: 28 }} colSpan={11}>
+                <td style={{ ...td, textAlign: "center", color: "#999", padding: 28 }} colSpan={12}>
                   {loading ? "加载中..." : "暂无草稿记录"}
                 </td>
               </tr>
@@ -291,6 +301,15 @@ export default function DraftsClient() {
                   <td style={td}>{d.direction === "income" ? "收入" : "支出"}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700, color: d.direction === "income" ? "#2e7d32" : "#c62828" }}>
                     ¥{fmtYuan(d.amount)}
+                  </td>
+                  <td style={{ ...td, textAlign: "center" }}>
+                    {(attachCounts.get(d.id) ?? 0) > 0 ? (
+                      <span className="ft-chip ft-chip-info" title="已上传票据，转移时会一并带到正式流水">
+                        📎 {attachCounts.get(d.id)}
+                      </span>
+                    ) : (
+                      <span style={{ color: "#cbd5e1" }}>—</span>
+                    )}
                   </td>
                   <td style={td}>{d.categories?.name ?? "-"}</td>
                   <td style={td}>{d.accounts?.name ?? "-"}</td>

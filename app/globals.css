@@ -1,26 +1,339 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   FisherTools 设计系统
+   项目页面大量使用内联样式，这里以「基础元素样式 + 可复用工具类」的方式提供
+   统一视觉；内联样式优先级更高，因此不会意外破坏既有布局。
+   ========================================================================== */
+
 :root {
+  /* 色板 */
+  --ft-bg: #f4f6f9;
+  --ft-surface: #ffffff;
+  --ft-surface-2: #f6f8fa;
+  --ft-border: #e3e8ef;
+  --ft-border-strong: #cbd5e1;
+
+  --ft-text: #1f2937;
+  --ft-text-muted: #64748b;
+  --ft-text-faint: #94a3b8;
+
+  --ft-primary: #2563eb;
+  --ft-primary-dark: #1d4ed8;
+  --ft-primary-soft: #eff6ff;
+
+  --ft-success: #16a34a;
+  --ft-success-soft: #ecfdf5;
+  --ft-danger: #dc2626;
+  --ft-danger-soft: #fef2f2;
+  --ft-warning: #d97706;
+  --ft-warning-soft: #fffbeb;
+
+  /* 圆角 / 阴影 */
+  --ft-radius-sm: 6px;
+  --ft-radius: 10px;
+  --ft-radius-lg: 14px;
+  --ft-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --ft-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --ft-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+
+  /* 兼容旧变量（注意：全站页面均为浅色内联配色，故不再跟随系统深色模式） */
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1f2937;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Source Han Sans SC", "Noto Sans CJK SC", system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   表单控件与按钮：统一圆角 / 聚焦态
+   -------------------------------------------------------------------------- */
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+}
+
+input,
+select,
+textarea {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select,
+textarea {
+  border: 1px solid var(--ft-border-strong);
+  border-radius: var(--ft-radius-sm);
+  background: #fff;
+  color: var(--ft-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--ft-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #f1f5f9;
+  color: var(--ft-text-faint);
+  cursor: not-allowed;
+}
+
+button {
+  cursor: pointer;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+button:not(:disabled):hover {
+  filter: brightness(0.96);
+}
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* --------------------------------------------------------------------------
+   可复用工具类
+   -------------------------------------------------------------------------- */
+.ft-page {
+  max-width: 1180px;
+  margin: 32px auto;
+  padding: 0 16px 48px;
+}
+
+.ft-card {
+  background: var(--ft-surface);
+  border: 1px solid var(--ft-border);
+  border-radius: var(--ft-radius);
+  box-shadow: var(--ft-shadow-sm);
+  padding: 16px;
+}
+
+.ft-page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.ft-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin: 0;
+  letter-spacing: -0.2px;
+  color: var(--ft-text);
+}
+
+.ft-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ft-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--ft-radius-sm);
+  border: 1px solid var(--ft-border-strong);
+  background: #fff;
+  color: var(--ft-text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.ft-btn-primary {
+  background: var(--ft-primary);
+  border-color: var(--ft-primary);
+  color: #fff;
+}
+.ft-btn-danger {
+  background: var(--ft-danger);
+  border-color: var(--ft-danger);
+  color: #fff;
+}
+.ft-btn-ghost {
+  background: var(--ft-surface-2);
+}
+.ft-btn-sm {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* <details> 当作下拉菜单用时，隐藏默认三角标记 */
+summary.ft-btn {
+  list-style: none;
+}
+summary.ft-btn::-webkit-details-marker {
+  display: none;
+}
+
+.ft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  background: var(--ft-surface-2);
+  color: var(--ft-text-muted);
+}
+.ft-chip-success {
+  background: var(--ft-success-soft);
+  color: var(--ft-success);
+}
+.ft-chip-danger {
+  background: var(--ft-danger-soft);
+  color: var(--ft-danger);
+}
+.ft-chip-info {
+  background: var(--ft-primary-soft);
+  color: var(--ft-primary-dark);
+}
+
+/* 横向滚动容器：移动端宽表格不再挤压变形 */
+.ft-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--ft-border);
+  border-radius: var(--ft-radius);
+  background: #fff;
+}
+
+/* 数据表格统一皮肤（需显式加 class，避免影响既有内联表格） */
+.ft-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ft-table thead th {
+  background: var(--ft-surface-2);
+  color: var(--ft-text-muted);
+  font-weight: 700;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ft-border);
+}
+.ft-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.ft-table tbody tr:hover td {
+  background: #f8fafc;
+}
+
+.ft-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.ft-muted {
+  color: var(--ft-text-muted);
+}
+
+.ft-only-mobile {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   移动端适配
+   -------------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  body {
+    font-size: 15px;
+  }
+
+  .ft-page {
+    margin: 16px auto;
+    padding: 0 12px 72px;
+  }
+
+  .ft-title {
+    font-size: 19px;
+  }
+
+  .ft-card {
+    padding: 12px;
+    border-radius: var(--ft-radius-sm);
+  }
+
+  /* 避免 iOS 输入时页面被自动放大 */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  .ft-btn {
+    height: 40px;
+  }
+  .ft-btn-sm {
+    height: 34px;
+  }
+
+  .ft-only-mobile {
+    display: block;
+  }
+  .ft-only-desktop {
+    display: none !important;
+  }
+}
+
+/* 打印：隐藏导航与操作按钮 */
+@media print {
+  .ft-no-print,
+  .ft-toolbar {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
 }

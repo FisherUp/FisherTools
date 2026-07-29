@@ -1,12 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
+import AiTxInputPanel, { type AiTxResult } from "../../components/AiTxInputPanel";
+import { formatBytes, uploadReceiptImageFile } from "../../../lib/services/imageStorageService";
 
 type Account = { id: string; name: string; type: "cash" | "bank"; is_active: boolean };
 type Category = { id: string; name: string; is_active: boolean };
 type Member = { id: string; name: string };
+
+/** 按名称在候选列表里找 id（AI 返回的是名称） */
+function matchIdByName<T extends { id: string; name: string }>(list: T[], name: string): string {
+  const s = (name ?? "").trim();
+  if (!s) return "";
+  const exact = list.find((x) => x.name === s);
+  if (exact) return exact.id;
+  const fuzzy = list.find((x) => x.name.includes(s) || s.includes(x.name));
+  return fuzzy ? fuzzy.id : "";
+}
 
 async function getMyProfile() {
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
@@ -56,6 +68,12 @@ export default function NewTransactionClient() {
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+
+  /** 待上传的票据附件（AI 拍照留存 或 手动选择） */
+  const [attachFiles, setAttachFiles] = useState<File[]>([]);
+  /** AI 已填表提示，提醒用户确认后再提交 */
+  const [aiFilled, setAiFilled] = useState<string>("");
+  const attachInputRef = useRef<HTMLInputElement>(null);
 
   const amountFen = useMemo(() => {
     const n = Number(amountYuan);
@@ -119,6 +137,71 @@ export default function NewTransactionClient() {
     load();
   }, []);
 
+  /** AI 解析结果 → 预填表单（不自动提交，用户确认后手动点保存） */
+  const applyAiResult = (r: AiTxResult, photo: File | null) => {
+    const filled: string[] = [];
+
+    if (r.date) {
+      setDate(r.date);
+      filled.push("日期");
+    }
+    setDirection(r.direction);
+    filled.push("收支");
+
+    if (r.amount_yuan > 0) {
+      setAmountYuan(String(r.amount_yuan));
+      filled.push("金额");
+    }
+
+    const catId = matchIdByName(categories, r.category);
+    if (catId) {
+      setCategoryId(catId);
+      filled.push("类别");
+    }
+
+    const accId = matchIdByName(accounts, r.account);
+    if (accId) {
+      setAccountId(accId);
+      filled.push("账户");
+    }
+
+    const h1 = matchIdByName(members, r.handler1);
+    if (h1) {
+      setHandler1Id(h1);
+      filled.push("经手人1");
+    }
+    const h2 = matchIdByName(members, r.handler2);
+    if (h2 && h2 !== h1) {
+      setHandler2Id(h2);
+      filled.push("经手人2");
+    }
+
+    if (r.description) {
+      setDescription(r.description);
+      filled.push("备注");
+    }
+
+    if (photo) setAttachFiles((prev) => [...prev, photo]);
+
+    const missing: string[] = [];
+    if (r.amount_yuan <= 0) missing.push("金额");
+    if (!catId) missing.push("类别");
+    if (!accId) missing.push("账户");
+
+    setAiFilled(
+      `AI 已填写：${filled.join("、") || "（无）"}` +
+        (missing.length ? `；请手动补充：${missing.join("、")}` : "") +
+        "。请核对无误后再点击保存。"
+    );
+    setMsg("");
+  };
+
+  const onPickAttachments = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+    if (files.length) setAttachFiles((prev) => [...prev, ...files]);
+    if (attachInputRef.current) attachInputRef.current.value = "";
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg("");
@@ -136,52 +219,107 @@ export default function NewTransactionClient() {
     try {
       const { orgId } = await getMyProfile();
 
-      const { error } = await supabase.from("transactions").insert({
-        org_id: orgId, // ✅ 必须写入 org_id（配合 RLS）
-        date,
-        amount: amountFen,
-        direction,
-        account_id: accountId,
-        category_id: categoryId,
-        description: description.trim() || null,
-        handler1_id: handler1Id || null,
-        handler2_id: handler2Id || null,
-      });
+      // 需要拿回 id 才能把附件挂到这条流水上
+      const { data: inserted, error } = await supabase
+        .from("transactions")
+        .insert({
+          org_id: orgId, // ✅ 必须写入 org_id（配合 RLS）
+          date,
+          amount: amountFen,
+          direction,
+          account_id: accountId,
+          category_id: categoryId,
+          description: description.trim() || null,
+          handler1_id: handler1Id || null,
+          handler2_id: handler2Id || null,
+        })
+        .select("id")
+        .single();
 
       if (error) return setMsg("保存失败：" + error.message);
+
+      let attachMsg = "";
+      if (inserted?.id && attachFiles.length > 0) {
+        attachMsg = await uploadPendingAttachments(orgId, String(inserted.id));
+      }
 
       setAmountYuan("");
       setDescription("");
       setHandler1Id("");
       setHandler2Id("");
+      setAttachFiles([]);
+      setAiFilled("");
 
-      setMsg("✅ 保存成功！你可以返回列表查看。");
+      setMsg(`✅ 保存成功！${attachMsg}你可以返回列表查看。`);
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div style={{ maxWidth: 760, margin: "40px auto", padding: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>新增收支流水</h1>
+  /** 提交成功后把待上传附件压缩并写入 attachments */
+  const uploadPendingAttachments = async (orgId: string, txId: string): Promise<string> => {
+    let saved = 0;
+    const errors: string[] = [];
 
-        <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          <a
-            href={backUrl}
-            style={{
-              padding: "8px 12px",
-              border: "1px solid #ddd",
-              borderRadius: 6,
-              textDecoration: "none",
-            }}
-          >
+    for (const file of attachFiles) {
+      try {
+        const uploaded = await uploadReceiptImageFile(orgId, txId, file);
+        const { error: insErr } = await supabase.from("attachments").insert({
+          org_id: orgId,
+          transaction_id: txId,
+          storage_path: uploaded.storagePath,
+          file_url: uploaded.storagePath,
+        });
+        if (insErr) {
+          await supabase.storage.from("receipts").remove([uploaded.storagePath]);
+          errors.push(`${file.name}：${insErr.message}`);
+          continue;
+        }
+        saved += Math.max(0, uploaded.originalBytes - uploaded.uploadedBytes);
+      } catch (err: unknown) {
+        errors.push(`${file.name}：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    const okCount = attachFiles.length - errors.length;
+    const okText = okCount > 0 ? `已上传 ${okCount} 张附件（压缩节省约 ${formatBytes(saved)}）。` : "";
+    const errText = errors.length > 0 ? `附件失败 ${errors.length} 个：${errors.join("；")}。` : "";
+    return okText + errText;
+  };
+
+  return (
+    <div className="ft-page" style={{ maxWidth: 760 }}>
+      <div className="ft-page-head">
+        <h1 className="ft-title">新增收支流水</h1>
+
+        <div style={{ marginLeft: "auto" }}>
+          <a href={backUrl} className="ft-btn">
             ← 返回列表
           </a>
         </div>
       </div>
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+      <div style={{ marginBottom: 16 }}>
+        <AiTxInputPanel onParsed={applyAiResult} disabled={loading} />
+      </div>
+
+      {!!aiFilled && (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: "10px 12px",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#1d4ed8",
+          }}
+        >
+          {aiFilled}
+        </div>
+      )}
+
+      <form onSubmit={onSubmit} className="ft-card" style={{ display: "grid", gap: 12 }}>
         <label>
           日期：
           <input
@@ -286,12 +424,71 @@ export default function NewTransactionClient() {
             placeholder="例如：12月团建聚餐"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            style={{ display: "block", width: "100%", padding: 8, marginTop: 6 }}
+            style={{ display: "block", width: "100%", padding: 8, marginTop: 6, boxSizing: "border-box" }}
             rows={3}
           />
         </label>
 
-        <button type="submit" disabled={loading} style={{ padding: 10, fontWeight: 700 }}>
+        {/* 票据附件：提交时一并上传（自动压缩） */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>票据附件：</span>
+            <button
+              type="button"
+              className="ft-btn ft-btn-sm"
+              onClick={() => attachInputRef.current?.click()}
+              disabled={loading}
+            >
+              📎 添加图片
+            </button>
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              {attachFiles.length > 0 ? `已选 ${attachFiles.length} 张，保存时自动压缩上传` : "可选，上传前会自动压缩"}
+            </span>
+          </div>
+
+          <input
+            ref={attachInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={onPickAttachments}
+            style={{ display: "none" }}
+          />
+
+          {attachFiles.length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              {attachFiles.map((f, i) => (
+                <div
+                  key={`${f.name}-${i}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 8px",
+                    background: "#f6f8fa",
+                    border: "1px solid #e3e8ef",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.name}
+                  </span>
+                  <span style={{ color: "#94a3b8" }}>{formatBytes(f.size)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    style={{ border: "none", background: "transparent", color: "#dc2626", padding: 0 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button type="submit" disabled={loading} className="ft-btn ft-btn-primary" style={{ height: 42 }}>
           {loading ? "保存中..." : "保存"}
         </button>
 
