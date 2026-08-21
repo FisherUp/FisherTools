@@ -10,9 +10,9 @@
  *     - 中文由浏览器系统字体渲染，100% 不会乱码；
  *     - 不需要下载任何字体；
  *     - 通过按行分页测量，保证不会把某一行从中间截断。
+ *
+ *   jspdf / html2canvas 均采用动态 import，不会进入页面首屏 bundle。
  */
-
-import jsPDF from "jspdf";
 
 export type PdfAlign = "left" | "center" | "right";
 
@@ -239,7 +239,10 @@ function computeColWidths(columns: PdfColumn[]): number[] {
  * 会自动按行分页（不会把一行从中间截断），每页都重绘表头。
  */
 export async function exportTablePdf(opts: PdfExportOptions): Promise<void> {
-  const html2canvas = (await import("html2canvas")).default;
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf"),
+  ]);
 
   const orientation = opts.orientation ?? "portrait";
   const page = PAPER[opts.paper ?? "a4"][orientation];

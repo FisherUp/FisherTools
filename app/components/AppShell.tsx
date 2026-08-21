@@ -68,6 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: "其他模块",
     items: [
       { href: "/inventory", label: "物资管理", icon: "📦", roles: ALL_ITEM_ROLES },
+      { href: "/fridge", label: "冰箱管理", icon: "🧊", roles: ALL_ITEM_ROLES },
       { href: "/services", label: "服务排班", icon: "🗓️", roles: FINANCE_ROLES },
       { href: "/leaves", label: "休假管理", icon: "🌴", roles: FINANCE_ROLES },
     ],

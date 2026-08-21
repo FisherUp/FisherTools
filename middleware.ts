@@ -102,8 +102,11 @@ export async function middleware(req: NextRequest) {
     return redir;
   }
 
-  // 6) inventory-edit / learner 角色：只允许访问 /inventory 及其子路由
-  if (!pathname.startsWith("/inventory")) {
+  // 6) inventory-edit / learner 角色：只允许访问物资与冰箱模块
+  const isItemModule = ["/inventory", "/fridge"].some(
+    (prefix) => pathname === prefix || pathname.startsWith(prefix + "/")
+  );
+  if (!isItemModule) {
     const role = await resolveRole();
     if (role === "inventory-edit" || role === "learner") {
       const url = req.nextUrl.clone();
